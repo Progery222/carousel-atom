@@ -1,0 +1,40 @@
+slug: lifestyle
+display_name: "Athlete Lifestyle"
+language: en
+
+sources:
+  - kind: rss
+    name: TMZ Sports
+    feed: https://www.tmz.com/rss.xml
+  - kind: rss
+    name: GQ Sports
+    feed: https://www.gq.com/feed/rss
+  - kind: rss
+    name: Bleacher Report
+    feed: https://bleacherreport.com/articles/feed
+  - kind: rss
+    name: Forbes Sports
+    feed: https://www.forbes.com/sportsmoney/feed/
+
+brand:
+  colors:
+    bg: "#0A0A0A"
+    accent: "#E91E63"
+    accent_light: "#F472B6"
+    text: "#FFFFFF"
+  fonts:
+    headline: assets/fonts/Inter-ExtraBold.ttf
+    body: assets/fonts/Inter-Bold.ttf
+
+cta:
+  headline: "FOLLOW\nFOR ATHLETE\nLIFESTYLE"
+  subtext: "OFF THE FIELD, EVERY DAY"
+
+caption:
+  intro: "💎 ATHLETE LIFESTYLE 💎"
+  hashtags: [athletelifestyle, sportsstars, sportsluxury, athleteslife, sportsdrama, celebsports]
+  style: bullet
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: America/Los_Angeles, send_hours: [11, 17, 21]}
+delivery: {telegram_chat: env:CHAT_LIFESTYLE}

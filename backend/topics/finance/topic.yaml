@@ -1,0 +1,72 @@
+slug: finance
+display_name: "Finance Daily"
+language: en
+
+# Personal finance + markets is consistently the highest-earning niche
+# on TikTok/Instagram in 2026. Bloomberg + Reuters anchor credibility,
+# CNBC/MarketWatch deliver retail-investor cadence, Yahoo Finance and
+# Motley Fool round out the populist angle.
+sources:
+  - kind: rss
+    name: Bloomberg Markets
+    feed: https://feeds.bloomberg.com/markets/news.rss
+  - kind: rss
+    name: CNBC Top News
+    feed: https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10001147
+  - kind: rss
+    name: MarketWatch
+    feed: https://feeds.content.dowjones.io/public/rss/mw_topstories
+  - kind: rss
+    name: Yahoo Finance
+    feed: https://finance.yahoo.com/news/rssindex
+  - kind: rss
+    name: Reuters Business
+    feed: https://www.reutersagency.com/feed/?best-topics=business&post_type=best
+  - kind: rss
+    name: The Motley Fool
+    feed: https://www.fool.com/feeds/index.aspx
+
+# Drop sponsored "best stocks to buy" listicles, paywalled prediction
+# pieces, and broker promo content.
+blocklist:
+  - "best stocks to buy"
+  - "best stock"
+  - "stocks to buy now"
+  - "should you buy"
+  - "ad:"
+  - "sponsored"
+  - "promo"
+  - "best brokers"
+
+brand:
+  # Wall-street green on midnight blue — instantly reads "money/markets"
+  # without leaning into the crypto-orange palette.
+  colors:
+    bg: "#0A1628"
+    accent: "#00C853"
+    accent_light: "#69F0AE"
+    text: "#FFFFFF"
+
+cta:
+  headline: "SUBSCRIBE\nFOR THE LATEST\nFINANCE NEWS"
+  subtext: "EVERYTHING MONEY, EVERY DAY"
+
+caption:
+  intro: "💰 FINANCE UPDATE 💰"
+  hashtags: [finance, money, investing, stocks, business, financenews, markets, wallstreet, personalfinance]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+# US market hours drive the rhythm: pre-market, midday, close, after-hours.
+schedule:
+  timezone: America/New_York
+  send_hours: [8, 12, 16, 20]
+
+delivery:
+  telegram_chat: env:CHAT_FINANCE

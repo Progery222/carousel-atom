@@ -1,0 +1,68 @@
+slug: food
+display_name: "Food Daily"
+language: en
+
+# Viral recipes + restaurant news + food trends are reliably the
+# highest-saving niche on Instagram carousels in 2026. Eater + Bon
+# Appétit cover restaurant industry, Food52 + The Kitchn + Serious Eats
+# bring recipe/technique content, Food & Wine for trends.
+sources:
+  - kind: rss
+    name: Eater
+    feed: https://www.eater.com/rss/index.xml
+  - kind: rss
+    name: Bon Appétit
+    feed: https://www.bonappetit.com/feed/rss
+  - kind: rss
+    name: Food52
+    feed: https://food52.com/blog.rss
+  - kind: rss
+    name: The Kitchn
+    feed: https://www.thekitchn.com/main.rss
+  - kind: rss
+    name: Serious Eats
+    feed: https://www.seriouseats.com/feed.xml
+  - kind: rss
+    name: Food & Wine
+    feed: https://www.foodandwine.com/feeds/all/rss.xml
+
+blocklist:
+  - "best of"
+  - "buying guide"
+  - "round-up"
+  - "weekly meal plan"
+  - "amazon prime"
+  - "deal of the day"
+
+brand:
+  # Warm dark brown + paprika orange — kitchen warmth, not the
+  # generic-yellow fast-food palette.
+  colors:
+    bg: "#1A0F0A"
+    accent: "#FF6B35"
+    accent_light: "#FFAB80"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nFOOD NEWS"
+  subtext: "EVERYTHING FOOD, EVERY DAY"
+
+caption:
+  intro: "🍔 FOOD UPDATE 🍔"
+  hashtags: [food, foodie, recipes, cooking, foodnews, foodtok, foodtrends, restaurant, foodporn, recipe]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+# Meal-time cadence: morning, lunch, dinner.
+schedule:
+  timezone: America/New_York
+  send_hours: [9, 13, 18]
+
+delivery:
+  telegram_chat: env:CHAT_FOOD

@@ -1,0 +1,66 @@
+slug: science
+display_name: "Science Daily"
+language: en
+
+# Curiosity-driven science content over-indexes on watch time + saves
+# in the 2026 algorithm reports. Nature + Science Daily anchor the
+# original-research feed, New Scientist + Quanta deliver narrative
+# explanations, Phys.org provides volume across physics/astronomy/biology.
+sources:
+  - kind: rss
+    name: Science Daily
+    feed: https://www.sciencedaily.com/rss/all.xml
+  - kind: rss
+    name: New Scientist
+    feed: https://www.newscientist.com/feed/home/
+  - kind: rss
+    name: Phys.org
+    feed: https://phys.org/rss-feed/
+  - kind: rss
+    name: Nature
+    feed: https://www.nature.com/nature.rss
+  - kind: rss
+    name: Quanta Magazine
+    feed: https://www.quantamagazine.org/feed/
+  - kind: rss
+    name: Live Science
+    feed: https://www.livescience.com/feeds/all
+
+blocklist:
+  - "podcast:"
+  - "video:"
+  - "infographic"
+  - "best of"
+  - "listicle"
+
+brand:
+  # Deep teal + bright cyan — reads as "lab/space" without leaning
+  # into the textbook-blue trap.
+  colors:
+    bg: "#0A1F2A"
+    accent: "#00BFA5"
+    accent_light: "#5EEAD4"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nSCIENCE NEWS"
+  subtext: "EVERYTHING SCIENCE, EVERY DAY"
+
+caption:
+  intro: "🔬 SCIENCE UPDATE 🔬"
+  hashtags: [science, sciencenews, research, discovery, sciencefacts, physics, biology, space, astronomy, sciencetok]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+schedule:
+  timezone: America/New_York
+  send_hours: [10, 14, 19]
+
+delivery:
+  telegram_chat: env:CHAT_SCIENCE

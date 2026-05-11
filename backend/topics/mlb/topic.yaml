@@ -1,0 +1,65 @@
+slug: mlb
+display_name: "MLB Daily"
+language: en
+
+# ────────────────────────────────────────────────────────────────────────
+# Source curation — baseball's 162-game regular season produces a daily
+# news cycle. MLB Trade Rumors is essential for transaction velocity;
+# the rest cover game results and storylines.
+# ────────────────────────────────────────────────────────────────────────
+sources:
+  - kind: rss
+    name: ESPN MLB
+    feed: https://www.espn.com/espn/rss/mlb/news
+  - kind: rss
+    name: CBS Sports MLB
+    feed: https://www.cbssports.com/rss/headlines/mlb/
+  - kind: rss
+    name: Yahoo Sports MLB
+    feed: https://sports.yahoo.com/mlb/rss/
+  - kind: rss
+    name: MLB Trade Rumors
+    feed: https://www.mlbtraderumors.com/feed
+  - kind: html
+    name: MLB.com
+    url: https://www.mlb.com/news/
+    article_pattern: "/news/"
+
+blocklist:
+  - "minor league"
+  - "milb"
+  - "kbo"
+  - "npb"
+  - "softball"
+  - "fantasy"
+  - "draft kings"
+
+brand:
+  colors:
+    bg: "#0A1538"
+    accent: "#D50032"
+    accent_light: "#FF6B8A"
+    text: "#FFFFFF"
+
+cta:
+  headline: "SUBSCRIBE\nFOR THE LATEST\nMLB NEWS DAILY"
+  subtext: "EVERYTHING MLB, EVERY DAY"
+
+caption:
+  intro: "⚾ MLB UPDATE ⚾"
+  hashtags: [mlb, baseball, mlbnews, mlbupdates, mlbdaily, baseballnews]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+schedule:
+  timezone: America/New_York
+  send_hours: [9, 14, 20]
+
+delivery:
+  telegram_chat: env:CHAT_MLB

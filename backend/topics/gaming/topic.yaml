@@ -1,0 +1,69 @@
+slug: gaming
+display_name: "Gaming Daily"
+language: en
+
+# Gaming is one of TikTok's largest verticals. IGN + GameSpot for
+# mainstream news, Polygon + Eurogamer for analysis, Kotaku for the
+# culture/drama beat, The Verge games for consumer-facing crossover.
+sources:
+  - kind: rss
+    name: IGN
+    feed: https://feeds.feedburner.com/ign/all
+  - kind: rss
+    name: Polygon
+    feed: https://www.polygon.com/rss/index.xml
+  - kind: rss
+    name: Eurogamer
+    feed: https://www.eurogamer.net/feed
+  - kind: rss
+    name: GameSpot
+    feed: https://www.gamespot.com/feeds/news/
+  - kind: rss
+    name: Kotaku
+    feed: https://kotaku.com/rss
+  - kind: rss
+    name: The Verge Games
+    feed: https://www.theverge.com/rss/games/index.xml
+
+# Drop guide/listicle/review noise — TikTok-friendly news only.
+blocklist:
+  - "best games"
+  - "buying guide"
+  - "review:"
+  - "guide:"
+  - "tier list"
+  - "how to beat"
+  - "walkthrough"
+  - "deal of the day"
+
+brand:
+  # Twitch-purple on charcoal — the visual language gamers already
+  # associate with the medium.
+  colors:
+    bg: "#0F0A1F"
+    accent: "#9146FF"
+    accent_light: "#D0A2FF"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR THE LATEST\nGAMING NEWS"
+  subtext: "EVERYTHING GAMING, EVERY DAY"
+
+caption:
+  intro: "🎮 GAMING UPDATE 🎮"
+  hashtags: [gaming, gamer, esports, videogames, gamingnews, ps5, xbox, nintendo, pcgaming, gamingtok]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+schedule:
+  timezone: America/Los_Angeles
+  send_hours: [10, 15, 20]
+
+delivery:
+  telegram_chat: env:CHAT_GAMING

@@ -1,0 +1,80 @@
+slug: crypto
+display_name: "Crypto Daily"
+language: en
+
+# ────────────────────────────────────────────────────────────────────────
+# Source curation — crypto news has 24/7 cadence and high TikTok
+# engagement. CoinDesk + Decrypt are the two most credible mainstream
+# voices (less shilling, more reporting). CoinTelegraph + The Block
+# add depth on regulatory + institutional stories. Bitcoin Magazine is
+# narrowly focused on BTC, useful for halving/policy beats.
+#
+# Deliberately NOT included: pure aggregators (CryptoPanic), pumpsites
+# (cryptopotato), and YouTube embeds which produce thin headlines.
+# ────────────────────────────────────────────────────────────────────────
+sources:
+  - kind: rss
+    name: CoinDesk
+    feed: https://www.coindesk.com/arc/outboundfeeds/rss/
+  - kind: rss
+    name: Decrypt
+    feed: https://decrypt.co/feed
+  - kind: rss
+    name: CoinTelegraph
+    feed: https://cointelegraph.com/rss
+  - kind: rss
+    name: The Block
+    feed: https://www.theblock.co/rss.xml
+  - kind: rss
+    name: Bitcoin Magazine
+    feed: https://bitcoinmagazine.com/.rss/full/
+
+# Crypto-specific noise to drop. Price-prediction articles are the
+# crypto equivalent of betting-preview teasers — the headline promises
+# a number that lives behind a paywall or in a 2000-word piece. Same
+# with "buy now" / "best to buy in 2026" listicles.
+blocklist:
+  - "price prediction"
+  - "buy now"
+  - "best crypto to buy"
+  - "memecoin to buy"
+  - "10x potential"
+  - "presale"
+  - "100x"
+  - "casino"
+  - "betting"
+
+brand:
+  # Bitcoin orange on near-black is the genre's instantly-recognisable
+  # combo. Accent-light is a softer salmon for headline highlights.
+  colors:
+    bg: "#0D0D0D"
+    accent: "#F7931A"
+    accent_light: "#FFB05C"
+    text: "#FFFFFF"
+
+cta:
+  headline: "SUBSCRIBE\nFOR THE LATEST\nCRYPTO NEWS DAILY"
+  subtext: "EVERYTHING CRYPTO, EVERY DAY"
+
+caption:
+  intro: "₿ CRYPTO UPDATE ₿"
+  hashtags: [crypto, bitcoin, ethereum, cryptonews, web3, blockchain, btc, eth]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+# Crypto market never sleeps — push 4 times a day instead of the usual
+# three so we can ride the Asia open / EU open / US open / late-US
+# headline cadence.
+schedule:
+  timezone: America/New_York
+  send_hours: [6, 11, 16, 21]
+
+delivery:
+  telegram_chat: env:CHAT_CRYPTO

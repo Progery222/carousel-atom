@@ -1,0 +1,95 @@
+slug: soccer
+display_name: "Soccer Daily"
+language: en
+
+# ────────────────────────────────────────────────────────────────────────
+# Source curation (research notes — April 2026):
+#
+# Quality tier ordering by image:
+#   1. BBC Sport       — `/sport/2048/cpsprodpb/` press pool, 2000+ px hero
+#   2. Guardian        — `i.guim.co.uk/.../master/2000.jpg`, ~1.4MB JPEGs
+#   3. FourFourTwo     — Future Plc CDN, 1500-2000 px featured images
+#   4. Football.London — Reach Plc, 1200 px hero from Mirror/Express stack
+#   5. Independent     — Smarter Living's `/aspect-ratio/3-2/` pipeline
+#   6. Sky Sports      — usable; the football-only feed (11095) is required
+#                        because the all-sport feed (12040) bleeds boxing,
+#                        F1, NFL into the pool
+#
+# Disabled / removed:
+#   ✗ Goal.com         — RSS thumbs are 200-300 px and og:image is the same.
+#                        Flip `enabled: true` if you ever want their take
+#                        back in the pool, but expect soft slides.
+#   ✗ ESPN Soccer      — heavy MLS bias and og:image quality varies
+#                        wildly. Worse than the alternatives above for
+#                        European football coverage.
+# ────────────────────────────────────────────────────────────────────────
+sources:
+  - kind: rss
+    name: BBC Sport Football
+    feed: https://feeds.bbci.co.uk/sport/football/rss.xml
+  - kind: rss
+    name: Guardian Football
+    feed: https://www.theguardian.com/football/rss
+  - kind: rss
+    name: FourFourTwo
+    feed: https://www.fourfourtwo.com/rss.xml
+  - kind: rss
+    name: Football.London
+    feed: https://www.football.london/?service=rss
+  - kind: rss
+    name: Independent Football
+    feed: https://www.independent.co.uk/sport/football/rss
+  - kind: rss
+    name: Sky Sports Football
+    feed: https://www.skysports.com/rss/11095
+  - kind: rss
+    name: Goal.com
+    feed: https://www.goal.com/feeds/news?fmt=rss
+    enabled: false
+
+# Cross-sport bleed filter. If any of these substrings appears in a
+# headline, the article is dropped before render. Caught by the recent
+# screenshot where boxing and F1 stories leaked in via the Sky Sports
+# all-sport feed. Lowercased substring match — case-insensitive.
+blocklist:
+  - "boxing"
+  - "billam-smith"
+  - "rozicki"
+  - "wwe"
+  - "ufc"
+  - "mma"
+  - "rugby"
+  - "cricket"
+  - "f1"
+  - "formula 1"
+  - "grand prix"
+  - "nascar"
+  - "indycar"
+  - "nfl"
+  - "darts"
+  - "snooker"
+  - "tennis"
+  - "golf"
+
+brand:
+  colors:
+    bg: "#0A0A0A"
+    accent: "#00D26A"
+    accent_light: "#5DDB8B"
+    text: "#FFFFFF"
+  fonts:
+    headline: assets/fonts/Inter-ExtraBold.ttf
+    body: assets/fonts/Inter-Bold.ttf
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nSOCCER NEWS"
+  subtext: "GLOBAL FOOTBALL, EVERY DAY"
+
+caption:
+  intro: "⚽ SOCCER NEWS ⚽"
+  hashtags: [soccer, football, soccernews, footballnews, championsleague, premierleague]
+  style: bullet
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: Europe/London, send_hours: [10, 16, 21]}
+delivery: {telegram_chat: env:CHAT_SOCCER}

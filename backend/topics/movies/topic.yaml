@@ -1,0 +1,76 @@
+slug: movies
+display_name: "Movies & TV Daily"
+language: en
+
+# ────────────────────────────────────────────────────────────────────────
+# Source curation — entertainment industry has constant cadence (release
+# announcements, casting, box office, streaming data, awards). Variety
+# + Deadline + THR are the trade trio (most credible, most "scoop"-y);
+# IndieWire adds craft/awards angle; Collider adds fan-press perspective
+# on franchise properties.
+# ────────────────────────────────────────────────────────────────────────
+sources:
+  - kind: rss
+    name: Variety
+    feed: https://variety.com/feed/
+  - kind: rss
+    name: Deadline
+    feed: https://deadline.com/feed/
+  - kind: rss
+    name: The Hollywood Reporter
+    feed: https://www.hollywoodreporter.com/feed/
+  - kind: rss
+    name: IndieWire
+    feed: https://www.indiewire.com/feed/
+  - kind: rss
+    name: Collider
+    feed: https://collider.com/feed/
+
+# Trailer drops, clip releases, and review listicles are huge volume
+# but most are teasers or container articles ("10 best Netflix shows
+# this week"). The teaser regex in quality.py catches some, this
+# blocklist catches the entertainment-specific patterns.
+blocklist:
+  - "trailer drops"
+  - "watch the trailer"
+  - "clip released"
+  - "first look"
+  - "best movies on"
+  - "best shows on"
+  - "must-watch"
+  - "to stream this"
+  - "weekend box office preview"
+  - "fan theory"
+
+brand:
+  # Cinema palette — deep aubergine bg with film-projector gold accent.
+  # Reads as "premiere night" rather than the streaming-platform purple
+  # we'd get from a Netflix/Hulu-style colourway.
+  colors:
+    bg: "#1A0F1F"
+    accent: "#FFD700"
+    accent_light: "#FFE69C"
+    text: "#FFFFFF"
+
+cta:
+  headline: "SUBSCRIBE\nFOR THE LATEST\nMOVIE & TV NEWS"
+  subtext: "EVERYTHING CINEMA, EVERY DAY"
+
+caption:
+  intro: "🎬 ENTERTAINMENT UPDATE 🎬"
+  hashtags: [movies, tv, cinema, film, hollywood, streaming, entertainment, filmnews]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+schedule:
+  timezone: America/Los_Angeles
+  send_hours: [9, 14, 20]
+
+delivery:
+  telegram_chat: env:CHAT_MOVIES

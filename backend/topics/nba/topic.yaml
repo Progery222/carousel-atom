@@ -1,0 +1,76 @@
+slug: nba
+display_name: "NBA Daily"
+language: en
+
+# ────────────────────────────────────────────────────────────────────────
+# Source curation:
+#
+#   ✓ Yahoo Sports NBA   — landscape press shots, broad coverage (the
+#                          only feed from the original lineup that
+#                          survived; ESPN/NBA.com/Bleacher/Sporting/
+#                          HoopsHype all started returning HTML or
+#                          empty bodies in early May 2026)
+#   ✓ CBS Sports NBA     — wire-style headlines, ~36 items per pull,
+#                          stable XML
+#   ✓ ClutchPoints       — high-volume aggregator (~75 items), good for
+#                          fresh story velocity, leans player-narrative
+#   ✓ Basketball Insiders — middle-tier daily, decent press photos
+#   ✓ Hoops Rumors       — rumour/transaction-focused; balances the
+#                          recap-heavy CBS / Yahoo mix
+#   ✓ Fadeaway World     — feature/historical angle (slower cadence
+#                          but unique perspective)
+# ────────────────────────────────────────────────────────────────────────
+sources:
+  - kind: rss
+    name: Yahoo Sports NBA
+    feed: https://sports.yahoo.com/nba/rss
+  - kind: rss
+    name: CBS Sports NBA
+    feed: https://www.cbssports.com/rss/headlines/nba/
+  - kind: rss
+    name: ClutchPoints NBA
+    feed: https://clutchpoints.com/feed/
+  - kind: rss
+    name: Basketball Insiders
+    feed: https://www.basketballinsiders.com/feed/
+  - kind: rss
+    name: Hoops Rumors
+    feed: https://www.hoopsrumors.com/feed
+  - kind: rss
+    name: Fadeaway World
+    feed: https://fadeawayworld.net/feed
+
+# Drop cross-league bleed (some aggregators post WNBA / international /
+# NCAA under the NBA tag). ClutchPoints + Fadeaway also cross-post NFL
+# and Soccer occasionally, so blocking those keywords too.
+blocklist:
+  - "wnba"
+  - "g-league"
+  - "g league"
+  - "ncaa"
+  - "college basketball"
+  - "euroleague"
+  - "fiba"
+
+brand:
+  colors:
+    bg: "#0A0A0A"
+    accent: "#1D428A"
+    accent_light: "#5B7FB8"
+    text: "#FFFFFF"
+  fonts:
+    headline: assets/fonts/Inter-ExtraBold.ttf
+    body: assets/fonts/Inter-Bold.ttf
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nNBA NEWS"
+  subtext: "EVERYTHING NBA, EVERY DAY"
+
+caption:
+  intro: "🏀 NBA NEWS 🏀"
+  hashtags: [nba, basketball, nbanews, nbahighlights, nbadaily, hoops]
+  style: bullet
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: America/New_York, send_hours: [9, 14, 20]}
+delivery: {telegram_chat: env:CHAT_NBA}

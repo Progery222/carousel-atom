@@ -1,0 +1,68 @@
+slug: celebrity
+display_name: "Celebrity Daily"
+language: en
+
+# Celebrity / pop-culture news is the definitional Instagram-carousel
+# format (Pop Crave / DeuxMoi-style). People + E! + ET cover mainstream
+# entertainment, TMZ + Page Six handle scoops/drama, Just Jared adds
+# volume on day-to-day sightings.
+sources:
+  - kind: rss
+    name: People
+    feed: https://people.com/feed/
+  - kind: rss
+    name: E! News
+    feed: https://www.eonline.com/news.rss
+  - kind: rss
+    name: Entertainment Tonight
+    feed: https://www.etonline.com/news/rss
+  - kind: rss
+    name: TMZ
+    feed: https://www.tmz.com/rss.xml
+  - kind: rss
+    name: Page Six
+    feed: https://pagesix.com/feed/
+  - kind: rss
+    name: Just Jared
+    feed: https://www.justjared.com/feed/
+
+blocklist:
+  - "shop the look"
+  - "shopping:"
+  - "best of"
+  - "buying guide"
+  - "discount code"
+
+brand:
+  # Royal black + hot pink — pop-culture-Instagram default palette,
+  # the visual shorthand for "celebrity tea" carousels.
+  colors:
+    bg: "#1A0F1A"
+    accent: "#FF4081"
+    accent_light: "#FF80AB"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nCELEB NEWS"
+  subtext: "EVERYTHING CELEBRITY, EVERY DAY"
+
+caption:
+  intro: "⭐ CELEB UPDATE ⭐"
+  hashtags: [celebrity, celebnews, popculture, hollywood, popculturenews, celebs, celebritystyle, celebgossip, celeb]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+# Celebrity news cycles around the day — bump to 4 sends so the feed
+# never stales.
+schedule:
+  timezone: America/Los_Angeles
+  send_hours: [9, 13, 18, 22]
+
+delivery:
+  telegram_chat: env:CHAT_CELEBRITY

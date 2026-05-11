@@ -1,0 +1,66 @@
+slug: nfl
+display_name: "NFL Daily"
+language: en
+
+# ────────────────────────────────────────────────────────────────────────
+# Source curation — biggest US sport, very high RSS coverage. The mix
+# below balances established mainstream (ESPN/CBS) with NBC/Yahoo for
+# trade-rumour velocity and Bleacher for player-narrative storylines.
+# ────────────────────────────────────────────────────────────────────────
+sources:
+  - kind: rss
+    name: ESPN NFL
+    feed: https://www.espn.com/espn/rss/nfl/news
+  - kind: rss
+    name: CBS Sports NFL
+    feed: https://www.cbssports.com/rss/headlines/nfl/
+  - kind: rss
+    name: Yahoo Sports NFL
+    feed: https://sports.yahoo.com/nfl/rss/
+  - kind: rss
+    name: Pro Football Talk
+    feed: https://profootballtalk.nbcsports.com/feed/
+  - kind: html
+    name: NFL.com
+    url: https://www.nfl.com/news/
+    article_pattern: "/news/"
+
+# Cross-league bleed prevention. Bleacher Report and CBS sometimes
+# surface NCAA / XFL / USFL stories under the NFL section.
+blocklist:
+  - "ncaa"
+  - "college football"
+  - "xfl"
+  - "usfl"
+  - "cfl"
+  - "afc championship odds"
+
+brand:
+  colors:
+    bg: "#0A1B2E"
+    accent: "#D50A0A"
+    accent_light: "#FF7A7A"
+    text: "#FFFFFF"
+
+cta:
+  headline: "SUBSCRIBE\nFOR THE LATEST\nNFL NEWS DAILY"
+  subtext: "EVERYTHING NFL, EVERY DAY"
+
+caption:
+  intro: "🏈 NFL UPDATE 🏈"
+  hashtags: [nfl, football, nflnews, nflupdates, nfldaily, americanfootball]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+schedule:
+  timezone: America/New_York
+  send_hours: [9, 14, 20]
+
+delivery:
+  telegram_chat: env:CHAT_NFL

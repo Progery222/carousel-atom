@@ -1,0 +1,67 @@
+slug: ai
+display_name: "AI Daily"
+language: en
+
+# AI is its own beat now — model launches, agent demos, regulation,
+# enterprise adoption land daily. Split out from `tech` so the carousel
+# can live entirely in AI velocity (TechCrunch AI + VentureBeat AI for
+# news, The Decoder + MIT Tech Review for analysis, The Verge AI for
+# consumer angle).
+sources:
+  - kind: rss
+    name: TechCrunch AI
+    feed: https://techcrunch.com/category/artificial-intelligence/feed/
+  - kind: rss
+    name: VentureBeat AI
+    feed: https://venturebeat.com/category/ai/feed/
+  - kind: rss
+    name: The Verge AI
+    feed: https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
+  - kind: rss
+    name: The Decoder
+    feed: https://the-decoder.com/feed/
+  - kind: rss
+    name: MIT Technology Review
+    feed: https://www.technologyreview.com/topic/artificial-intelligence/feed
+  - kind: rss
+    name: Ars Technica AI
+    feed: https://arstechnica.com/ai/feed/
+
+blocklist:
+  - "best ai tool"
+  - "buying guide"
+  - "vs."
+  - "review:"
+  - "deal of the day"
+
+brand:
+  # Cyan on near-black — reads as "synthetic / agent-y" rather than
+  # the standard SaaS purple.
+  colors:
+    bg: "#070A1A"
+    accent: "#00E5FF"
+    accent_light: "#84FFFF"
+    text: "#FFFFFF"
+
+cta:
+  headline: "SUBSCRIBE\nFOR THE LATEST\nAI NEWS DAILY"
+  subtext: "EVERYTHING AI, EVERY DAY"
+
+caption:
+  intro: "🤖 AI UPDATE 🤖"
+  hashtags: [ai, artificialintelligence, llm, chatgpt, machinelearning, generativeai, openai, anthropic, agi]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+schedule:
+  timezone: America/Los_Angeles
+  send_hours: [9, 13, 18]
+
+delivery:
+  telegram_chat: env:CHAT_AI

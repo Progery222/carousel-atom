@@ -1,0 +1,49 @@
+# Don't ship dev cruft into the build context
+.git
+.gitignore
+.github
+
+# Python local stuff
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.venv
+**/venv
+**/env
+**/.ruff_cache
+**/.mypy_cache
+
+# Node local stuff
+**/node_modules
+**/.vite
+
+# Runtime data (created at runtime, mounted via Volume on Railway)
+backend/data
+*.log
+.backend.log
+.frontend.log
+
+# Local builds — Dockerfile builds them fresh
+frontend/dist
+
+# Editor / OS metadata
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Local secrets
+.env
+.env.local
+.env.*.local
+
+# Claude tooling
+.claude
+ANALYSIS.md
+CLAUDE.md
+HANDOFF.md
+README.md
+preview
+"Start Carousel Studio.command"
+dev.sh
+Makefile

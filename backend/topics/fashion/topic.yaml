@@ -1,0 +1,68 @@
+slug: fashion
+display_name: "Fashion Daily"
+language: en
+
+# Fashion-drop + runway content is a heavy carousel category on
+# Instagram. Hypebeast + Highsnobiety dominate streetwear/drops, Vogue
+# + WWD anchor luxury / industry, The Cut + Business of Fashion add
+# editorial + commerce angle.
+sources:
+  - kind: rss
+    name: Hypebeast
+    feed: https://hypebeast.com/feed
+  - kind: rss
+    name: Highsnobiety
+    feed: https://www.highsnobiety.com/feed/
+  - kind: rss
+    name: Vogue
+    feed: https://www.vogue.com/feed/rss
+  - kind: rss
+    name: WWD
+    feed: https://wwd.com/feed/
+  - kind: rss
+    name: The Cut
+    feed: https://www.thecut.com/rss.xml
+  - kind: rss
+    name: Business of Fashion
+    feed: https://www.businessoffashion.com/feed/
+
+blocklist:
+  - "best of"
+  - "shop the look"
+  - "buying guide"
+  - "where to buy"
+  - "sale alert"
+  - "discount code"
+  - "amazon prime"
+
+brand:
+  # Oxblood + hot pink — luxury-magazine palette without going full
+  # millennial-pink.
+  colors:
+    bg: "#1A0A0F"
+    accent: "#FF1493"
+    accent_light: "#FFB6E1"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nFASHION NEWS"
+  subtext: "EVERYTHING STYLE, EVERY DAY"
+
+caption:
+  intro: "👗 FASHION UPDATE 👗"
+  hashtags: [fashion, style, ootd, streetwear, fashionnews, designer, runway, hypebeast, fashionweek, fashiontok]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+schedule:
+  timezone: America/New_York
+  send_hours: [10, 15, 20]
+
+delivery:
+  telegram_chat: env:CHAT_FASHION

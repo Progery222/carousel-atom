@@ -1,0 +1,77 @@
+slug: tech
+display_name: "Tech & AI Daily"
+language: en
+
+# ────────────────────────────────────────────────────────────────────────
+# Source curation — covers both general consumer tech (The Verge,
+# Engadget) and AI-specific velocity (TechCrunch AI, VentureBeat AI,
+# Hacker News). Wired/Ars sit in the middle for analysis pieces. AI is
+# its own beat now so two AI-only feeds are intentional.
+# ────────────────────────────────────────────────────────────────────────
+sources:
+  - kind: rss
+    name: The Verge
+    feed: https://www.theverge.com/rss/index.xml
+  - kind: rss
+    name: TechCrunch
+    feed: https://techcrunch.com/feed/
+  - kind: rss
+    name: Ars Technica
+    feed: https://feeds.arstechnica.com/arstechnica/index
+  - kind: rss
+    name: Wired
+    feed: https://www.wired.com/feed/rss
+  - kind: rss
+    name: Engadget
+    feed: https://www.engadget.com/rss.xml
+  - kind: rss
+    name: VentureBeat AI
+    feed: https://venturebeat.com/category/ai/feed
+  - kind: rss
+    name: TechCrunch AI
+    feed: https://techcrunch.com/category/artificial-intelligence/feed/
+  - kind: rss
+    name: 9to5Mac
+    feed: https://9to5mac.com/feed/
+
+# Drop op-ed/review/buying-guide noise. Tech sites publish a lot of
+# evergreen "best laptops 2026" content that isn't news.
+blocklist:
+  - "best of"
+  - "buying guide"
+  - "vs."
+  - "review:"
+  - "deal of the day"
+  - "amazon prime day"
+  - "black friday"
+  - "cyber monday"
+
+brand:
+  colors:
+    bg: "#0F0F23"
+    accent: "#7C3AED"
+    accent_light: "#C4B5FD"
+    text: "#FFFFFF"
+
+cta:
+  headline: "SUBSCRIBE\nFOR THE LATEST\nTECH NEWS DAILY"
+  subtext: "EVERYTHING TECH, EVERY DAY"
+
+caption:
+  intro: "💻 TECH & AI UPDATE 💻"
+  hashtags: [tech, technews, ai, artificialintelligence, technology, techdaily, aitech]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+schedule:
+  timezone: America/New_York
+  send_hours: [9, 13, 18]
+
+delivery:
+  telegram_chat: env:CHAT_TECH

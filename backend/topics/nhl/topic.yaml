@@ -1,0 +1,75 @@
+slug: nhl
+display_name: "NHL Daily"
+language: en
+
+# ────────────────────────────────────────────────────────────────────────
+# Source curation — NHL season runs October-June, plus playoffs which
+# stretch into mid-June. ESPN NHL is the workhorse; NHL.com gives league
+# voice (player profiles, official trades); Sportsnet/TSN add the
+# Canadian angle which is a big part of the NHL story (most Canadian
+# teams + Hockey Night in Canada). Bleacher Report tossed in for the
+# trade-rumour velocity that the legacy outlets are slower on.
+# ────────────────────────────────────────────────────────────────────────
+sources:
+  - kind: rss
+    name: ESPN NHL
+    feed: https://www.espn.com/espn/rss/nhl/news
+  - kind: rss
+    name: CBS Sports NHL
+    feed: https://www.cbssports.com/rss/headlines/nhl/
+  - kind: rss
+    name: Yahoo Sports NHL
+    feed: https://sports.yahoo.com/nhl/rss/
+  - kind: rss
+    name: ProHockeyTalk
+    feed: https://nhl.nbcsports.com/feed/
+  - kind: html
+    name: NHL.com
+    url: https://www.nhl.com/news
+    article_pattern: "/news/"
+  - kind: rss
+    name: Sportsnet NHL
+    feed: https://www.sportsnet.ca/hockey/nhl/feed/
+
+# Cross-league bleed prevention. ESPN sometimes mixes AHL prospect
+# stories under the NHL section; Sportsnet covers the Canadian
+# Hockey League which is junior-level.
+blocklist:
+  - "ahl"
+  - "echl"
+  - "ohl"
+  - "whl"
+  - "qmjhl"
+  - "ncaa hockey"
+  - "junior hockey"
+  - "world junior"
+
+brand:
+  colors:
+    bg: "#0A0E27"
+    accent: "#CE1126"
+    accent_light: "#FF7A7A"
+    text: "#FFFFFF"
+
+cta:
+  headline: "SUBSCRIBE\nFOR THE LATEST\nNHL NEWS DAILY"
+  subtext: "EVERYTHING NHL, EVERY DAY"
+
+caption:
+  intro: "🏒 NHL UPDATE 🏒"
+  hashtags: [nhl, hockey, nhlnews, nhldaily, hockeynews, icehockey]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+schedule:
+  timezone: America/New_York
+  send_hours: [9, 14, 20]
+
+delivery:
+  telegram_chat: env:CHAT_NHL

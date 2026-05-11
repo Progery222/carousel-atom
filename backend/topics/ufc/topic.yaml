@@ -1,0 +1,37 @@
+slug: ufc
+display_name: "UFC & MMA Daily"
+language: en
+
+sources:
+  - kind: rss
+    name: MMA Fighting
+    feed: https://www.mmafighting.com/rss/index.xml
+  - kind: rss
+    name: MMA Junkie
+    feed: https://mmajunkie.usatoday.com/feed
+  - kind: rss
+    name: ESPN MMA
+    feed: https://www.espn.com/espn/rss/mma/news
+
+brand:
+  colors:
+    bg: "#0A0A0A"
+    accent: "#FFB81C"
+    accent_light: "#FFD96E"
+    text: "#FFFFFF"
+  fonts:
+    headline: assets/fonts/Inter-ExtraBold.ttf
+    body: assets/fonts/Inter-Bold.ttf
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nUFC NEWS"
+  subtext: "EVERY KNOCKOUT, EVERY FIGHT"
+
+caption:
+  intro: "🥊 UFC & MMA NEWS 🥊"
+  hashtags: [ufc, mma, mmanews, ufcnews, ufcfight, mmafighter]
+  style: bullet
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: America/New_York, send_hours: [10, 15, 21]}
+delivery: {telegram_chat: env:CHAT_UFC}

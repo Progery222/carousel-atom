@@ -1,0 +1,70 @@
+slug: fitness
+display_name: "Fitness Daily"
+language: en
+
+# Fitness + wellness is one of the loudest growth niches in 2026 — daily
+# how-to / news content travels well on TikTok + IG Reels. Men's Health
+# + Women's Health for mainstream news, Runner's World + Outside for
+# endurance/outdoor, Self for women's wellness, Healthline for science-y.
+sources:
+  - kind: rss
+    name: Men's Health
+    feed: https://www.menshealth.com/rss/all.xml/
+  - kind: rss
+    name: Women's Health
+    feed: https://www.womenshealthmag.com/rss/all.xml/
+  - kind: rss
+    name: Runner's World
+    feed: https://www.runnersworld.com/rss/all.xml/
+  - kind: rss
+    name: Outside
+    feed: https://www.outsideonline.com/feed/
+  - kind: rss
+    name: Self
+    feed: https://www.self.com/feed/rss
+  - kind: rss
+    name: Healthline
+    feed: https://www.healthline.com/rss
+
+# Drop product-roundup / supplement-promo noise.
+blocklist:
+  - "best protein"
+  - "best supplements"
+  - "best running shoes"
+  - "buying guide"
+  - "amazon prime"
+  - "deal of the day"
+  - "sponsored"
+
+brand:
+  # Energetic lime-green on forest dark — "movement" palette without
+  # the mid-2010s neon-gym vibe.
+  colors:
+    bg: "#0F1A0A"
+    accent: "#76FF03"
+    accent_light: "#B9F6CA"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nFITNESS TIPS"
+  subtext: "EVERYTHING FITNESS, EVERY DAY"
+
+caption:
+  intro: "💪 FITNESS UPDATE 💪"
+  hashtags: [fitness, health, workout, wellness, gym, fitnesstips, healthandfitness, fitfam, fittok, exercise]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+# Pre-workout, post-lunch, evening — when fitness audiences scroll.
+schedule:
+  timezone: America/New_York
+  send_hours: [6, 12, 17]
+
+delivery:
+  telegram_chat: env:CHAT_FITNESS

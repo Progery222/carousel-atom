@@ -1,0 +1,68 @@
+slug: music
+display_name: "Music Daily"
+language: en
+
+# Music news travels fastest on TikTok/IG when it's release-oriented
+# (drops, charts, tour announcements). Billboard + Rolling Stone
+# anchor mainstream, Pitchfork for indie/critical, NME for UK angle,
+# Stereogum + Consequence for breadth.
+sources:
+  - kind: rss
+    name: Billboard
+    feed: https://www.billboard.com/feed/
+  - kind: rss
+    name: Rolling Stone Music
+    feed: https://www.rollingstone.com/music/feed/
+  - kind: rss
+    name: Pitchfork
+    feed: https://pitchfork.com/rss/news/
+  - kind: rss
+    name: NME
+    feed: https://www.nme.com/feed
+  - kind: rss
+    name: Stereogum
+    feed: https://www.stereogum.com/feed/
+  - kind: rss
+    name: Consequence
+    feed: https://consequence.net/feed/
+
+blocklist:
+  - "best albums"
+  - "best songs"
+  - "playlist:"
+  - "review:"
+  - "best of"
+  - "deal of the day"
+
+brand:
+  # Midnight + rose — concert-poster vibe, doesn't tie to any single
+  # genre's color language.
+  colors:
+    bg: "#0A0A1A"
+    accent: "#FF6B9D"
+    accent_light: "#FFB3D1"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nMUSIC NEWS"
+  subtext: "EVERYTHING MUSIC, EVERY DAY"
+
+caption:
+  intro: "🎵 MUSIC UPDATE 🎵"
+  hashtags: [music, musicnews, newmusic, musictok, songs, artists, billboard, hiphop, pop, indie]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+# New-music Friday + evening listening windows.
+schedule:
+  timezone: America/New_York
+  send_hours: [10, 14, 19]
+
+delivery:
+  telegram_chat: env:CHAT_MUSIC

@@ -1,0 +1,93 @@
+slug: f1
+display_name: "F1 Daily"
+language: en
+
+# ────────────────────────────────────────────────────────────────────────
+# Source curation:
+#
+#   ✓ BBC F1            — /sport/2048/cpsprodpb/ press shots, top tier
+#   ✓ Sky Sports F1     — race-control shots, decent quality
+#   ✓ ESPN F1           — landscape press photos, US bias on storylines
+#   ✓ Crash.net         — solid fan-press hybrid coverage, RSS reliable
+#   ✓ Autosport         — HTML scrape, smaller volume but unique angles
+#   ✓ Motorsport.com    — HTML scrape, race-weekend heavy
+#   ✓ formula1.com      — official site; great photos but recycles the
+#                         same studio image across "Cooldown Room" /
+#                         "Beyond the Grid" series. Image dedup in
+#                         pipeline handles the duplication.
+# ────────────────────────────────────────────────────────────────────────
+sources:
+  - kind: rss
+    name: BBC F1
+    feed: https://feeds.bbci.co.uk/sport/formula1/rss.xml
+  - kind: rss
+    name: Sky Sports F1
+    feed: https://www.skysports.com/rss/12433
+  - kind: rss
+    name: ESPN F1
+    feed: https://www.espn.com/espn/rss/f1/news
+  - kind: rss
+    name: Crash.net F1
+    feed: https://www.crash.net/rss/f1
+  - kind: html
+    name: formula1.com
+    url: https://www.formula1.com/en/latest
+    article_pattern: "/en/latest/article"
+  - kind: html
+    name: motorsport.com
+    url: https://www.motorsport.com/f1/news/
+    article_pattern: "/f1/news/"
+  - kind: html
+    name: autosport.com
+    url: https://www.autosport.com/f1/news/
+    article_pattern: "/f1/news/"
+
+# Filter cross-sport leakage. Sky Sports F1 occasionally bleeds NASCAR /
+# IndyCar / WEC. The blocklist removes those at headline-match time.
+blocklist:
+  - "nascar"
+  - "indycar"
+  - "wec"
+  - "rally"
+  - "moto gp"
+  - "motogp"
+  - "wrc"
+  - "formula e"
+  - "formula 2"
+  - "formula 3"
+  - "f2"
+  - "f3"
+
+brand:
+  logo: assets/logo.png
+  colors:
+    bg: "#0A0A0A"
+    accent: "#FF1801"
+    accent_light: "#FF6B5A"
+    text: "#FFFFFF"
+  fonts:
+    headline: assets/fonts/Inter-ExtraBold.ttf
+    body: assets/fonts/Inter-Bold.ttf
+
+cta:
+  headline: "SUBSCRIBE\nFOR THE LATEST\nF1 NEWS DAILY"
+  subtext: "STAY UP TO DATE WITH F1"
+
+caption:
+  intro: "🏎 F1 NEWS UPDATE 🏎"
+  hashtags: [f1, formula1, f1news, formulaone, f1update, f1daily]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+schedule:
+  timezone: Europe/Berlin
+  send_hours: [9, 15, 21]
+
+delivery:
+  telegram_chat: env:CHAT_F1
