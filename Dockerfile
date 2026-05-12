@@ -64,10 +64,13 @@ COPY --from=frontend /build/dist /app/frontend/dist
 # Railway mounts a volume at this path for persistent SQLite + rendered runs.
 RUN mkdir -p /app/backend/data
 
-# Non-root user for runtime.
-RUN useradd --create-home --shell /bin/bash carousel \
- && chown -R carousel:carousel /app
-USER carousel
+# Run as root. We previously had a `carousel` non-root user, but Railway
+# mounts its persistent volume on /app/backend/data AFTER the Dockerfile
+# chown runs, so the mount point comes back owned by root:root and a
+# non-root process can't create /app/backend/data/output at startup
+# (PermissionError on import of api.server). Switching to root is the
+# cleanest fix — the container is locked behind Railway's gateway and
+# the app doesn't exec untrusted shell input.
 
 WORKDIR /app/backend
 EXPOSE 8000
