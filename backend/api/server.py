@@ -645,13 +645,41 @@ def v1_redoc():
 # ── Frontend static mount ───────────────────────────────────────────────────
 #
 # In production (single-service Railway deploy) the Dockerfile builds the
-# Vite app and copies it to /app/frontend/dist. Mount it at "/" with
-# html=True so client-side routing falls back to index.html. This MUST be
-# the very last mount — once mounted on "/", any subsequent FastAPI
-# route registration would be shadowed.
+# Vite app and copies it to /app/frontend/dist. Mount it at "/" with a
+# subclass of StaticFiles that returns index.html for any 404 — true SPA
+# fallback so deep-links like /api-docs resolve to the React router.
+# Stock `StaticFiles(html=True)` only serves index.html when the URL path
+# matches a directory; it does NOT fall back for unknown deep links.
+#
+# This MUST be the very last mount — once mounted on "/", any subsequent
+# FastAPI route registration would be shadowed.
+from starlette.responses import FileResponse  # noqa: E402
+from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
+
+
+class _SPAStaticFiles(StaticFiles):
+    """StaticFiles with single-page-app fallback: any 404 → index.html.
+
+    The frontend's React Router takes it from there. We deliberately
+    re-raise the 404 for paths that look like API endpoints so unknown
+    /api/... or /output/... requests don't get masked by an HTML page.
+    """
+
+    _api_prefixes = ("api/", "output/")
+
+    async def get_response(self, path, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404 or path.startswith(self._api_prefixes):
+                raise
+            return FileResponse(Path(self.directory) / "index.html")
+
+
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 if _FRONTEND_DIST.exists():
-    app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="frontend")
+    app.mount("/", _SPAStaticFiles(directory=str(_FRONTEND_DIST), html=True),
+              name="frontend")
     log.info("serving frontend from %s", _FRONTEND_DIST)
 else:
     log.info("no frontend build at %s — running API-only", _FRONTEND_DIST)
