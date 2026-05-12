@@ -32,12 +32,17 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_RETRIES=5 \
+    PIP_TIMEOUT=60
 
 # Install Python deps first so the layer is cacheable.
+# The base image ships a working pip; we deliberately don't `pip install
+# --upgrade pip` because that fetches the PyPI JSON index and we've seen
+# it return truncated responses ("Unterminated string at column 732101")
+# that fail the whole build for a transient network/CDN issue.
 COPY backend/pyproject.toml /app/backend/pyproject.toml
-RUN pip install --upgrade pip setuptools wheel \
- && pip install \
+RUN pip install \
         "pillow>=10.0" \
         "requests>=2.31" \
         "beautifulsoup4>=4.12" \
