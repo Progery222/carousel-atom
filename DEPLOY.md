@@ -91,6 +91,12 @@ railway variables --set CAROUSEL_CACHE_DAYS=30
 Optional integrations (skip the ones you don't use):
 
 ```bash
+# Public API keys — required to enable /api/v1 for external services.
+# Comma-separated `name:key` pairs (the name surfaces in logs / metrics).
+railway variables --set CAROUSEL_API_KEYS="partner_acme:$(openssl rand -hex 24)"
+# Optional public origin so /api/v1 responses contain absolute slide URLs.
+railway variables --set PUBLIC_BASE_URL=https://YOUR-APP.up.railway.app
+
 # LLM rewriter
 railway variables --set LLM_API_KEY=sk-...
 railway variables --set LLM_MODEL=gpt-4o-mini
@@ -125,7 +131,15 @@ curl https://YOUR-APP.up.railway.app/health
 
 # Topics endpoint
 curl https://YOUR-APP.up.railway.app/topics
+
+# Public API (requires CAROUSEL_API_KEYS to be set)
+curl -H "X-API-Key: <your-key>" \
+  https://YOUR-APP.up.railway.app/api/v1/topics
 ```
+
+Once `CAROUSEL_API_KEYS` is set, the developer-facing reference is live
+at `https://YOUR-APP.up.railway.app/api-docs` (and Swagger UI at
+`/api/v1/docs`).
 
 ## Local Docker test (optional)
 

@@ -13,6 +13,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
+    "slowapi>=0.1.9",
 ]
 
 [tool.setuptools]

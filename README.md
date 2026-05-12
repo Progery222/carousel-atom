@@ -80,6 +80,19 @@ frontend/
 | V   | Toggle strip ↔ grid view                              |
 | Esc | Close any open modal                                  |
 
+## Public API
+
+External services can drive Carousel Studio via the versioned, key-authed
+`/api/v1/*` REST surface. Set `CAROUSEL_API_KEYS=...` and you get:
+
+- `/api/v1/topics`, `/api/v1/designs`, `/api/v1/preview/articles`
+- `/api/v1/render`, `/api/v1/render/edit`, `/api/v1/render/partial`
+- `/api/v1/export/{run_id}.zip`
+
+Full spec: [docs/API.md](docs/API.md). Interactive docs: visit
+`/api-docs` (custom reference) or `/api/v1/docs` (Swagger UI) on the
+running app.
+
 ## Run it
 
 ```bash

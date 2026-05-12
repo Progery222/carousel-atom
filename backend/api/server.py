@@ -8,17 +8,35 @@ import io
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
 
 import hashlib
-import shutil
+import time
 import uuid
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from slowapi.errors import RateLimitExceeded
+from starlette.middleware.base import BaseHTTPMiddleware
 
+from api.rate_limit import limiter
+from api.schemas import (
+    ArticleOut,
+    DeliverRequest,
+    DeliveryOut,
+    DesignOut,
+    PreviewOut,
+    RenderEditRequest,
+    RenderOut,
+    RenderPartialRequest,
+    RenderRequest,
+    RewriteHeadlineRequest,
+    RunHistoryOut,
+    ScheduleTriggerRequest,
+    SlideOut,
+    TopicOut,
+)
 from core import dedup, llm
 from core.caption_engine import set_llm_rewriter
 from core.delivery import ADAPTERS as DELIVERY_ADAPTERS
@@ -34,7 +52,7 @@ from core.pipeline import (
 )
 from core.scheduler import due_topics, run_due_topics
 from core.topic_loader import list_topics, load_topic
-from designs import get_design, list_designs
+from designs import list_designs
 
 log = get_logger("api")
 
@@ -69,6 +87,102 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="Carousel Studio", lifespan=_lifespan)
 
+# Rate limiter is owned by the public /api/v1 router but the limiter
+# state and exception handler are registered here so it ships with the app.
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    rid = getattr(request.state, "request_id", "")
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": {
+                "code": "rate_limited",
+                "message": f"rate limit exceeded: {exc.detail}",
+                "request_id": rid,
+            }
+        },
+        headers={"Retry-After": "60"},
+    )
+
+
+@app.exception_handler(HTTPException)
+async def _http_exc_handler(request: Request, exc: HTTPException):
+    """Unified error shape for /api/v1 — internal routes keep FastAPI defaults
+    so the studio frontend (which already parses `{detail: ...}`) is unaffected.
+    """
+    rid = getattr(request.state, "request_id", "")
+    if request.url.path.startswith("/api/v1/"):
+        # Map common HTTP codes to stable string codes the client can switch on.
+        code_map = {
+            400: "bad_request", 401: "unauthorized", 403: "forbidden",
+            404: "not_found", 409: "conflict", 413: "payload_too_large",
+            429: "rate_limited", 503: "service_unavailable",
+        }
+        code = code_map.get(exc.status_code, f"http_{exc.status_code}")
+        # Pipeline errors (409) embed the diagnostics dict as detail. Keep it
+        # inside the unified envelope so consumers can still drill in.
+        if isinstance(exc.detail, dict):
+            payload: dict = {
+                "code": exc.detail.get("status", code),
+                "message": exc.detail.get("message", str(exc.detail)),
+                "request_id": rid,
+                "details": exc.detail,
+            }
+        else:
+            payload = {"code": code, "message": str(exc.detail), "request_id": rid}
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": payload},
+            headers=exc.headers or {},
+        )
+    # Default FastAPI shape for everything else.
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=exc.headers or {},
+    )
+
+
+class _RequestContextMiddleware(BaseHTTPMiddleware):
+    """Generates X-Request-ID and logs method/path/status/duration for /api/v1."""
+
+    _log = get_logger("api.v1")
+
+    async def dispatch(self, request: Request, call_next):
+        rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+        request.state.request_id = rid
+        is_public = request.url.path.startswith("/api/v1/")
+        start = time.monotonic()
+        try:
+            response = await call_next(request)
+        except Exception:
+            if is_public:
+                dur_ms = int((time.monotonic() - start) * 1000)
+                self._log.exception("%s %s · 500 · %dms · rid=%s",
+                                    request.method, request.url.path, dur_ms, rid)
+            raise
+        response.headers["X-Request-ID"] = rid
+        if is_public:
+            dur_ms = int((time.monotonic() - start) * 1000)
+            key_name = getattr(getattr(request.state, "api_key", None), "name", "-")
+            self._log.info("%s %s · %d · %dms · key=%s · rid=%s",
+                           request.method, request.url.path,
+                           response.status_code, dur_ms, key_name, rid)
+        return response
+
+
+app.add_middleware(_RequestContextMiddleware)
+# Note: we deliberately do NOT register `SlowAPIMiddleware`. That
+# middleware sets `request.state._rate_limiting_complete = True` before
+# the endpoint runs, which causes the `@limiter.limit(...)` decorator
+# inside the endpoint to skip its check (slowapi.extension treats the
+# flag as "limit already enforced earlier"). Decorator-based limits
+# work standalone; the middleware is only needed for shared
+# `default_limits` applied to every route — which we don't want.
+
 # CORS — defaults are the Vite dev server, but the user can extend via env
 # without touching code (e.g. when running on a different port).
 ALLOWED_ORIGINS = [
@@ -78,117 +192,24 @@ ALLOWED_ORIGINS = [
     ).split(",") if o.strip()
 ]
 
+# Separate CORS list for the public /api/v1 router. Defaults to "*"
+# because the typical caller is server-to-server (no browser, no Origin).
+# Set to a comma list of origins if you need to call /api/v1 from a browser app.
+API_V1_ORIGINS = [
+    o.strip() for o in os.environ.get("CAROUSEL_API_CORS", "*").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=list({*ALLOWED_ORIGINS, *API_V1_ORIGINS}),
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID", "Retry-After"],
 )
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
-
-
-# ── Schemas ─────────────────────────────────────────────────────────────────
-
-
-class TopicOut(BaseModel):
-    slug: str
-    name: str
-    source_count: int
-    news_per_carousel: int
-
-
-class DesignOut(BaseModel):
-    slug: str
-    name: str
-    description: str
-
-
-class DeliveryOut(BaseModel):
-    slug: str
-    name: str
-    configured: dict[str, bool]
-
-
-class RenderRequest(BaseModel):
-    topic: str
-    design: str
-    mark_seen: bool = True
-    cross_topic_dedup: bool = False
-    deliver: str = ""  # adapter slug, e.g. "telegram"; empty = no delivery
-
-
-class ArticleIn(BaseModel):
-    title: str
-    url: str
-    source: str
-    image_url: str = ""
-    description: str = ""
-
-
-class RenderEditRequest(BaseModel):
-    """Re-render a carousel using user-edited articles (titles, image URLs)."""
-    topic: str
-    design: str
-    articles: list[ArticleIn]
-
-
-class RenderPartialRequest(BaseModel):
-    """Per-slide re-roll: items are either full articles (locked) or null
-    (re-roll this slot with a fresh pick from the pipeline)."""
-    topic: str
-    design: str
-    articles: list[Optional[ArticleIn]]
-
-
-class SlideOut(BaseModel):
-    index: int
-    url: str  # served via /output static mount
-
-
-class ArticleOut(BaseModel):
-    title: str
-    url: str
-    source: str
-    image_url: str = ""
-    description: str = ""
-
-
-class ArticleCandidate(ArticleOut):
-    score: float = 0.0
-
-
-class RenderOut(BaseModel):
-    status: str
-    run_id: str
-    topic: str
-    design: str
-    caption: str
-    articles: list[ArticleOut]
-    slides: list[SlideOut]
-    # `Optional[X]` syntax (instead of `X | None`) keeps the pydantic
-    # runtime evaluator happy on Python 3.9, where PEP 604 isn't a real
-    # type expression at runtime even with `from __future__ import annotations`.
-    delivery: Optional[dict] = None
-    diagnostics: Optional[dict] = None
-
-
-class RunHistoryOut(BaseModel):
-    topic: str
-    run_id: str
-    posted_at: int
-    platform: str
-    slide_count: Optional[int] = None
-    caption: Optional[str] = None
-
-
-class PreviewOut(BaseModel):
-    topic: str
-    raw: int
-    fresh: int
-    enriched: int
-    candidates: list[ArticleCandidate]
 
 
 # ── Routes ──────────────────────────────────────────────────────────────────
@@ -196,24 +217,12 @@ class PreviewOut(BaseModel):
 
 @app.get("/topics", response_model=list[TopicOut])
 def topics():
-    out: list[TopicOut] = []
-    for slug in list_topics():
-        t = load_topic(slug)
-        out.append(TopicOut(
-            slug=t.slug,
-            name=t.display_name,
-            source_count=len(t.sources),
-            news_per_carousel=t.carousel.news_per_carousel,
-        ))
-    return out
+    return list_topics_impl()
 
 
 @app.get("/designs", response_model=list[DesignOut])
 def designs():
-    return [
-        DesignOut(slug=d.slug, name=d.name, description=d.description)
-        for d in list_designs()
-    ]
+    return list_designs_impl()
 
 
 @app.get("/deliveries", response_model=list[DeliveryOut])
@@ -233,15 +242,16 @@ def deliveries():
     return out
 
 
-def _slide_url(path_str: str) -> str:
+def _slide_url(path_str: str, *, base: str = "") -> str:
     p = Path(path_str)
     rel = p.relative_to(OUTPUT_DIR)
-    return f"/output/{rel.as_posix()}"
+    suffix = f"/output/{rel.as_posix()}"
+    return f"{base.rstrip('/')}{suffix}" if base else suffix
 
 
-def _to_render_out(result: dict) -> RenderOut:
+def _to_render_out(result: dict, *, base: str = "") -> RenderOut:
     slides = [
-        SlideOut(index=i, url=_slide_url(p))
+        SlideOut(index=i, url=_slide_url(p, base=base))
         for i, p in enumerate(result["slide_paths"])
     ]
     return RenderOut(
@@ -257,9 +267,37 @@ def _to_render_out(result: dict) -> RenderOut:
     )
 
 
-@app.post("/render", response_model=RenderOut)
-def render(req: RenderRequest):
-    """Pull fresh news, render the carousel, return slide URLs + caption."""
+# ── Shared impl funcs (used by both internal /render and public /api/v1) ────
+
+
+def list_topics_impl() -> list[TopicOut]:
+    out: list[TopicOut] = []
+    for slug in list_topics():
+        t = load_topic(slug)
+        out.append(TopicOut(
+            slug=t.slug,
+            name=t.display_name,
+            source_count=len(t.sources),
+            news_per_carousel=t.carousel.news_per_carousel,
+        ))
+    return out
+
+
+def list_designs_impl() -> list[DesignOut]:
+    return [
+        DesignOut(slug=d.slug, name=d.name, description=d.description)
+        for d in list_designs()
+    ]
+
+
+def preview_impl(topic: str, limit: int = 12) -> PreviewOut:
+    if topic not in list_topics():
+        raise HTTPException(status_code=404, detail="unknown topic")
+    data = preview_articles(topic, limit=limit)
+    return PreviewOut(**data)
+
+
+def render_impl(req: RenderRequest, *, base: str = "") -> RenderOut:
     result = run_once(
         req.topic, req.design,
         mark_seen=req.mark_seen,
@@ -268,14 +306,10 @@ def render(req: RenderRequest):
     )
     if result["status"] != "ok":
         raise HTTPException(status_code=409, detail=result)
-    return _to_render_out(result)
+    return _to_render_out(result, base=base)
 
 
-@app.post("/render/edit", response_model=RenderOut)
-def render_edit(req: RenderEditRequest):
-    """Re-render an existing carousel after the user edited titles, descriptions
-    or swapped image URLs in the studio. Skips network fetching entirely.
-    """
+def render_edit_impl(req: RenderEditRequest, *, base: str = "") -> RenderOut:
     if not req.articles:
         raise HTTPException(status_code=400, detail="no articles supplied")
     overrides = [
@@ -295,26 +329,19 @@ def render_edit(req: RenderEditRequest):
     )
     if result["status"] != "ok":
         raise HTTPException(status_code=409, detail=result)
-    return _to_render_out(result)
+    return _to_render_out(result, base=base)
 
 
-@app.post("/render/partial", response_model=RenderOut)
-def render_partial(req: RenderPartialRequest):
-    """Re-render a carousel where some slots are locked and some need a
-    fresh story. `articles[i] == null` marks slot `i` for re-roll. The
-    pipeline picks `count(null)` fresh articles excluding the URLs of
-    locked slots, then renders the stitched lineup.
-    """
+def render_partial_impl(req: RenderPartialRequest, *, base: str = "") -> RenderOut:
     if not req.articles:
         raise HTTPException(status_code=400, detail="no articles supplied")
     null_positions = [i for i, a in enumerate(req.articles) if a is None]
     if not null_positions:
-        # Nothing to re-roll — fall through to /render/edit semantics.
         edit_req = RenderEditRequest(
             topic=req.topic, design=req.design,
             articles=[a for a in req.articles if a is not None],
         )
-        return render_edit(edit_req)
+        return render_edit_impl(edit_req, base=base)
 
     locked_urls = {a.url for a in req.articles if a is not None and a.url}
     fresh = select_fresh_candidates(
@@ -353,15 +380,40 @@ def render_partial(req: RenderPartialRequest):
     )
     if result["status"] != "ok":
         raise HTTPException(status_code=409, detail=result)
-    return _to_render_out(result)
+    return _to_render_out(result, base=base)
+
+
+# ── Internal routes (used by the studio frontend) ──────────────────────────
+
+
+@app.post("/render", response_model=RenderOut)
+def render(req: RenderRequest):
+    """Pull fresh news, render the carousel, return slide URLs + caption."""
+    return render_impl(req)
+
+
+@app.post("/render/edit", response_model=RenderOut)
+def render_edit(req: RenderEditRequest):
+    """Re-render an existing carousel after the user edited titles, descriptions
+    or swapped image URLs in the studio. Skips network fetching entirely.
+    """
+    return render_edit_impl(req)
+
+
+@app.post("/render/partial", response_model=RenderOut)
+def render_partial(req: RenderPartialRequest):
+    """Re-render a carousel where some slots are locked and some need a
+    fresh story. `articles[i] == null` marks slot `i` for re-roll. The
+    pipeline picks `count(null)` fresh articles excluding the URLs of
+    locked slots, then renders the stitched lineup.
+    """
+    return render_partial_impl(req)
 
 
 @app.get("/preview/articles", response_model=PreviewOut)
 def preview(topic: str, limit: int = 12):
     """Run quality+scoring without rendering — used to show candidates."""
-    if topic not in list_topics():
-        raise HTTPException(status_code=404, detail="unknown topic")
-    return preview_articles(topic, limit=limit)
+    return preview_impl(topic, limit=limit)
 
 
 @app.get("/runs", response_model=list[RunHistoryOut])
@@ -383,13 +435,6 @@ def dedup_reset(topic: str):
 def dedup_prune(days: int = 90):
     deleted = dedup.prune_seen(days=days)
     return {"deleted": deleted, "older_than_days": days}
-
-
-class ScheduleTriggerRequest(BaseModel):
-    design: str = "newsflash"
-    deliver: str = ""
-    window_min: int = 30
-    dry_run: bool = False
 
 
 @app.get("/schedule/due")
@@ -414,11 +459,6 @@ def schedule_trigger(req: ScheduleTriggerRequest):
     )
 
 
-class RewriteHeadlineRequest(BaseModel):
-    title: str
-    style: str = "punchier"  # punchier | factual | hook | translate_ru
-
-
 @app.post("/llm/rewrite-headline")
 def rewrite_headline(req: RewriteHeadlineRequest):
     """LLM-rewrite a single headline in the chosen style. Returns the
@@ -432,12 +472,6 @@ def rewrite_headline(req: RewriteHeadlineRequest):
         )
     rewritten = rewriter(req.title)
     return {"title": rewritten, "style": req.style}
-
-
-class DeliverRequest(BaseModel):
-    topic: str
-    caption: str
-    deliver: str = "telegram"
 
 
 @app.post("/deliver/{run_id}")
@@ -551,6 +585,61 @@ def health():
         "llm_enabled": bool(llm.caption_rewriter()) if llm._is_enabled() else False,
         "stats": topic_stats,
     }
+
+
+# ── Public API (/api/v1) ────────────────────────────────────────────────────
+#
+# The public router is included AFTER the internal routes are registered
+# but BEFORE the frontend SPA mount (which captures everything under "/").
+from api.v1 import public_health, router as v1_router  # noqa: E402
+
+
+@app.get("/api/v1/health", tags=["Public API v1"], summary="Liveness ping")
+def v1_health():
+    """Auth-free liveness check for the public API."""
+    return public_health()
+
+
+app.include_router(v1_router)
+
+
+# Override the Swagger UI / OpenAPI for the public API so consumers see
+# only the versioned surface. The default /docs and /openapi.json still
+# cover the full app (internal + public).
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html  # noqa: E402
+from fastapi.openapi.utils import get_openapi  # noqa: E402
+
+
+@app.get("/api/v1/openapi.json", include_in_schema=False)
+def v1_openapi():
+    """OpenAPI 3.1 schema filtered to /api/v1/* routes only."""
+    public_routes = [r for r in app.routes
+                     if getattr(r, "path", "").startswith("/api/v1")]
+    return get_openapi(
+        title="Carousel Studio Public API",
+        version="1.0.0",
+        description=(
+            "Server-to-server API for generating news carousels.\n\n"
+            "Auth: `X-API-Key` header (set via `CAROUSEL_API_KEYS` on the server)."
+        ),
+        routes=public_routes,
+    )
+
+
+@app.get("/api/v1/docs", include_in_schema=False)
+def v1_swagger():
+    return get_swagger_ui_html(
+        openapi_url="/api/v1/openapi.json",
+        title="Carousel Studio API · Swagger UI",
+    )
+
+
+@app.get("/api/v1/redoc", include_in_schema=False)
+def v1_redoc():
+    return get_redoc_html(
+        openapi_url="/api/v1/openapi.json",
+        title="Carousel Studio API · ReDoc",
+    )
 
 
 # ── Frontend static mount ───────────────────────────────────────────────────
