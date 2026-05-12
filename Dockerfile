@@ -47,7 +47,8 @@ RUN pip install --upgrade pip setuptools wheel \
         "python-dotenv>=1.0" \
         "fastapi>=0.110" \
         "uvicorn[standard]>=0.29" \
-        "python-multipart>=0.0.9"
+        "python-multipart>=0.0.9" \
+        "slowapi>=0.1.9"
 
 # Copy backend source (after deps so source edits don't bust the deps layer).
 COPY backend/ /app/backend/
