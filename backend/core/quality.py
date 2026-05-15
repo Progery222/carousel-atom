@@ -30,7 +30,9 @@ _NON_NEWS_TITLE_RE = re.compile(
     r"\b("
     r"quiz|poll|gallery|opinion|"
     r"ranked|rated|rating:|"
+    r"ranking\s+(?:all|every|the\s+\d+|all\s+\d+)|"
     r"watch:|video:|photos?:|"
+    r"watch\s+live\s+as|"
     r"guess\s+(?:the|who|which)|"
     r"can\s+you\s+(?:name|guess|spot|tell)|"
     r"on\s+this\s+day|years?\s+ago\s+today|"
@@ -114,7 +116,30 @@ _TEASER_RE = re.compile(
     r"\d+[-\s]way\s+parlay|parlay\s+(?:pick|return|hit|of)|"
     r"\bsame[-\s]game\s+parlay|"
     r"against\s+the\s+spread|"
-    r"\bover/under\b|over\s+or\s+under"
+    r"\bover/under\b|over\s+or\s+under|"
+    # Multi-event preview content — promises predictions/breakdowns for
+    # a series of upcoming events, lives only in the article body.
+    # Pattern: "Raiders game-by-game predictions after 2026 NFL Schedule release"
+    r"(?:game|week|round|day)[-\s]by[-\s](?:game|week|round|day)|"
+    r"schedule\s+(?:release|reveal|drop|breakdown)|"
+    r"mock\s+draft|"
+    r"bold\s+predictions?|"
+    r"way[-\s]?too[-\s]early|"
+    r"predictions?\s+for\s+(?:every|all|the|each|next|\d+)|"
+    r"(?:bold|wild|hot|fearless)\s+takes?|"
+    r"(?:from\s+)?worst\s+to\s+best|"
+    r"best\s+to\s+worst|"
+    r"things\s+to\s+watch|"
+    r"\d+\s+(?:things|reasons|takeaways|storylines)\s+to\s+(?:watch|know|expect)|"
+    r"breakout\s+candidates?|"
+    r"sleeper\s+(?:picks?|candidates?)|"
+    # Product / shopping listicles bleeding in from lifestyle feeds
+    # (GQ Sports, Men's Health, Esquire, etc.).
+    r"\d+\s+best\s+(?:\w+\s+){0,3}for\s+(?:men|women|him|her|kids?|guys|gals)|"
+    r"according\s+to\s+(?:our|the|gq|esquire|men\'?s\s+health|women\'?s\s+health)\s+editors?|"
+    # Tournament/season listicles — squad lists, fixture roundups, etc.
+    r"every\s+(?:player|team|club|fight|match|game)\s+(?:at|in|on)\b|"
+    r"complete\s+(?:guide|list|schedule)\s+to"
     r")\b",
     re.IGNORECASE,
 )
@@ -372,7 +397,8 @@ def score_article(a: Article, *, boost: list[str] | None = None) -> float:
 
 
 def balance_sources(articles: list[Article], count: int,
-                    *, max_per_source: int | None = None) -> list[Article]:
+                    *, max_per_source: int | None = None,
+                    key=None) -> list[Article]:
     """Round-robin pick across sources so a carousel doesn't end up all
     from one outlet — the F1 carousel was a perfect demo, every slide
     came from formula1.com and they all shared the same studio image.
@@ -380,17 +406,23 @@ def balance_sources(articles: list[Article], count: int,
     Articles are expected to be pre-sorted by score (best first). The
     round-robin then guarantees source diversity inside the top-N.
 
-    `max_per_source` caps how many slots any single outlet can claim.
+    `max_per_source` caps how many slots any single group can claim.
     Defaults to `count // 2 + 1` — for a 5-slide carousel that means a
     single source can take at most 3 slots, leaving room for at least
     two other publishers.
+
+    `key` lets the caller pick the grouping dimension (defaults to
+    article source). Sports Digest uses `extra["origin_topic"]` so the
+    round-robin diversifies across sports instead of publishers.
     """
     if max_per_source is None:
         max_per_source = max(1, count // 2 + 1)
+    if key is None:
+        key = lambda a: a.source
 
     by_source: dict[str, list[Article]] = defaultdict(list)
     for a in articles:
-        by_source[a.source].append(a)
+        by_source[key(a)].append(a)
     # Trim each source's pool to the cap up-front so the round-robin
     # never even sees the surplus.
     for s in list(by_source):

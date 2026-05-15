@@ -279,7 +279,10 @@ def list_topics_impl() -> list[TopicOut]:
             name=t.display_name,
             source_count=len(t.sources),
             news_per_carousel=t.carousel.news_per_carousel,
+            featured=t.featured,
         ))
+    # Featured topics first (Sports Digest pinned above the per-sport list).
+    out.sort(key=lambda x: (not x.featured, x.slug))
     return out
 
 

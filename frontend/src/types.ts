@@ -3,6 +3,7 @@ export interface Topic {
   name: string;
   source_count: number;
   news_per_carousel: number;
+  featured?: boolean;
 }
 
 export interface Design {

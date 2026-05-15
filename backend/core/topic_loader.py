@@ -25,6 +25,9 @@ class Source:
     sort_by: str = "publishedAt"
     # Operational toggle so noisy sources can be muted without removing them.
     enabled: bool = True
+    # For aggregated meta-topics (e.g. sports_now): records which child
+    # topic this source came from. Empty for regular topics.
+    origin_topic: str = ""
 
 
 @dataclass
@@ -96,6 +99,18 @@ class TopicConfig:
     # your favourite teams/players land in the carousel even on busy
     # news days. Each match adds +1.5 to the score.
     boost: list[str] = field(default_factory=list)
+    # Meta-topic: list of child topic slugs to aggregate sources from.
+    # When non-empty, this topic's own `sources` list is augmented with
+    # all enabled sources from each named child topic (tagged with their
+    # `origin_topic`), and child blocklists/boosts are merged in. Used
+    # to build the "Sports Digest" pseudo-topic that pulls latest news
+    # across every sport. Children are loaded shallowly — their own
+    # `aggregate_from` is ignored to keep loading bounded.
+    aggregate_from: list[str] = field(default_factory=list)
+    # Cosmetic hint for the UI: when True the topic is rendered above
+    # the regular topic list (e.g. pinned "🔥 Sports Digest"). Has no
+    # effect on the pipeline.
+    featured: bool = False
 
 
 def _hex(s: str) -> tuple[int, int, int]:
@@ -129,6 +144,28 @@ def load_topic(slug: str) -> TopicConfig:
         raw: dict[str, Any] = yaml.safe_load(f)
 
     sources = [Source(**s) for s in raw.get("sources", [])]
+
+    # Meta-topic aggregation: pull sources (and boost) from each named
+    # child topic, tagging every source with its origin so the pipeline
+    # can balance results by sport and pick a dynamic brand from the
+    # dominant child.
+    #
+    # Child blocklists are deliberately *not* merged — they exist to
+    # filter cross-sport bleed inside a single child's feed (e.g.
+    # Soccer blocks "f1" / "nfl"), but in a digest those become
+    # false-positive drops of legitimate F1/NFL stories. The meta-topic
+    # uses its own (usually empty) blocklist as the global filter.
+    aggregate_from = list(raw.get("aggregate_from") or [])
+    merged_boost: list[str] = []
+    for child_slug in aggregate_from:
+        try:
+            child = load_topic(child_slug)
+        except FileNotFoundError:
+            continue
+        for src in child.sources:
+            tagged = Source(**{**src.__dict__, "origin_topic": child.slug})
+            sources.append(tagged)
+        merged_boost.extend(child.boost)
 
     b = raw["brand"]
     # `fonts` block is optional. When absent, designs fall back to the
@@ -170,7 +207,9 @@ def load_topic(slug: str) -> TopicConfig:
         hook_pool=_load_pool(raw.get("hook_pool"), "HookCopy"),
         cta_pool=_load_pool(raw.get("cta_pool"),   "CtaCopy"),
         blocklist=list(raw.get("blocklist") or []),
-        boost=list(raw.get("boost") or []),
+        boost=list(raw.get("boost") or []) + merged_boost,
+        aggregate_from=aggregate_from,
+        featured=bool(raw.get("featured", False)),
     )
 
 
