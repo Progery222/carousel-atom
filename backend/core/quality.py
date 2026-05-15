@@ -372,7 +372,8 @@ def score_article(a: Article, *, boost: list[str] | None = None) -> float:
 
 
 def balance_sources(articles: list[Article], count: int,
-                    *, max_per_source: int | None = None) -> list[Article]:
+                    *, max_per_source: int | None = None,
+                    key=None) -> list[Article]:
     """Round-robin pick across sources so a carousel doesn't end up all
     from one outlet — the F1 carousel was a perfect demo, every slide
     came from formula1.com and they all shared the same studio image.
@@ -380,17 +381,23 @@ def balance_sources(articles: list[Article], count: int,
     Articles are expected to be pre-sorted by score (best first). The
     round-robin then guarantees source diversity inside the top-N.
 
-    `max_per_source` caps how many slots any single outlet can claim.
+    `max_per_source` caps how many slots any single group can claim.
     Defaults to `count // 2 + 1` — for a 5-slide carousel that means a
     single source can take at most 3 slots, leaving room for at least
     two other publishers.
+
+    `key` lets the caller pick the grouping dimension (defaults to
+    article source). Sports Digest uses `extra["origin_topic"]` so the
+    round-robin diversifies across sports instead of publishers.
     """
     if max_per_source is None:
         max_per_source = max(1, count // 2 + 1)
+    if key is None:
+        key = lambda a: a.source
 
     by_source: dict[str, list[Article]] = defaultdict(list)
     for a in articles:
-        by_source[a.source].append(a)
+        by_source[key(a)].append(a)
     # Trim each source's pool to the cap up-front so the round-robin
     # never even sees the surplus.
     for s in list(by_source):

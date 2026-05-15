@@ -13,6 +13,7 @@ class TopicOut(BaseModel):
     name: str
     source_count: int
     news_per_carousel: int
+    featured: bool = False
 
 
 class DesignOut(BaseModel):

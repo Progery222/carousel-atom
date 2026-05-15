@@ -92,13 +92,22 @@ def _fetch_source(src) -> list[Article]:
 
 
 def _collect(topic: TopicConfig) -> list[Article]:
-    """Pull every enabled source in parallel — IO-bound, threads are fine."""
+    """Pull every enabled source in parallel — IO-bound, threads are fine.
+
+    Articles are tagged with `extra["origin_topic"]` set to the child topic
+    slug for aggregated meta-topics, or the topic's own slug otherwise.
+    The pipeline uses this tag to balance the digest across sports and
+    pick a dynamic brand from the dominant origin.
+    """
     out: list[Article] = []
     enabled = [s for s in (topic.sources or []) if getattr(s, "enabled", True)]
     if not enabled:
         return out
     with ThreadPoolExecutor(max_workers=min(8, len(enabled))) as pool:
-        for batch in pool.map(_fetch_source, enabled):
+        for src, batch in zip(enabled, pool.map(_fetch_source, enabled)):
+            origin = src.origin_topic or topic.slug
+            for a in batch:
+                a.extra["origin_topic"] = origin
             out.extend(batch)
     return out
 
@@ -390,7 +399,23 @@ def run_once(topic_slug: str, design_slug: str = "newsflash",
         need = topic.carousel.news_per_carousel
         boost = topic.boost
         prelim = sorted(fresh, key=lambda a: -score_article(a, boost=boost))
-        candidates = prelim[: max(need * 5, need + 10)]
+        if topic.aggregate_from:
+            # For aggregated meta-topics, take the top-K per child topic
+            # instead of the global top-N — otherwise one sport's
+            # better-metadata RSS feeds eat the entire shortlist before
+            # the others get a look in. With ~8 children and per_child=10
+            # we end up enriching ~80 articles, which leaves the balance
+            # step with a comfortable per-sport pool.
+            per_child = max(8, need * 2)
+            by_origin: dict[str, list[Article]] = {}
+            for a in prelim:
+                origin = a.extra.get("origin_topic", "")
+                bucket = by_origin.setdefault(origin, [])
+                if len(bucket) < per_child:
+                    bucket.append(a)
+            candidates = [a for arts in by_origin.values() for a in arts]
+        else:
+            candidates = prelim[: max(need * 5, need + 10)]
 
         # Enrichment (og:image, image-search fallback) + verification
         # download. Articles whose image fails to download get their
@@ -421,7 +446,16 @@ def run_once(topic_slug: str, design_slug: str = "newsflash",
             enriched,
             key=lambda a: -(score_article(a, boost=boost) + trending.get(id(a), 0.0)),
         )
-        selected = balance_sources(ranked, need)
+        # Meta-topics (Sports Digest) round-robin by sport instead of by
+        # publisher — a digest of "today's top sports stories" must not
+        # be 4× NBA and 1× soccer just because NBA's feeds were loud.
+        if topic.aggregate_from:
+            selected = balance_sources(
+                ranked, need,
+                key=lambda a: a.extra.get("origin_topic", a.source),
+            )
+        else:
+            selected = balance_sources(ranked, need)
         if len(selected) < need:
             log.warning(
                 "only %d usable articles (needed %d)",
@@ -447,6 +481,26 @@ def run_once(topic_slug: str, design_slug: str = "newsflash",
             for a in selected:
                 a.title = rewriter(a.title)
         _section("llm rewrite", t)
+
+    # Meta-topics adopt the brand of the sport that dominates this
+    # particular digest, so a Sports Digest skewed toward F1 today renders
+    # in F1 red, and one skewed toward NBA tomorrow renders in NBA orange.
+    # Falls back to the meta-topic's own brand if the dominant child
+    # can't be loaded.
+    if topic.aggregate_from and selected:
+        from collections import Counter
+        counts = Counter(
+            a.extra.get("origin_topic", "") for a in selected if a.extra.get("origin_topic")
+        )
+        if counts:
+            dominant, _ = counts.most_common(1)[0]
+            try:
+                child = load_topic(dominant)
+                topic.brand = child.brand
+                topic.cta = child.cta
+                log.info("dynamic brand from dominant child '%s'", dominant)
+            except FileNotFoundError:
+                log.warning("dominant child '%s' not loadable — keeping meta brand", dominant)
 
     t = time.monotonic()
     slide_paths = design.render(topic, selected, out_dir)
