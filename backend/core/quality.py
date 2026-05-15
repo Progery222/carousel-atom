@@ -30,7 +30,9 @@ _NON_NEWS_TITLE_RE = re.compile(
     r"\b("
     r"quiz|poll|gallery|opinion|"
     r"ranked|rated|rating:|"
+    r"ranking\s+(?:all|every|the\s+\d+|all\s+\d+)|"
     r"watch:|video:|photos?:|"
+    r"watch\s+live\s+as|"
     r"guess\s+(?:the|who|which)|"
     r"can\s+you\s+(?:name|guess|spot|tell)|"
     r"on\s+this\s+day|years?\s+ago\s+today|"
@@ -114,7 +116,30 @@ _TEASER_RE = re.compile(
     r"\d+[-\s]way\s+parlay|parlay\s+(?:pick|return|hit|of)|"
     r"\bsame[-\s]game\s+parlay|"
     r"against\s+the\s+spread|"
-    r"\bover/under\b|over\s+or\s+under"
+    r"\bover/under\b|over\s+or\s+under|"
+    # Multi-event preview content — promises predictions/breakdowns for
+    # a series of upcoming events, lives only in the article body.
+    # Pattern: "Raiders game-by-game predictions after 2026 NFL Schedule release"
+    r"(?:game|week|round|day)[-\s]by[-\s](?:game|week|round|day)|"
+    r"schedule\s+(?:release|reveal|drop|breakdown)|"
+    r"mock\s+draft|"
+    r"bold\s+predictions?|"
+    r"way[-\s]?too[-\s]early|"
+    r"predictions?\s+for\s+(?:every|all|the|each|next|\d+)|"
+    r"(?:bold|wild|hot|fearless)\s+takes?|"
+    r"(?:from\s+)?worst\s+to\s+best|"
+    r"best\s+to\s+worst|"
+    r"things\s+to\s+watch|"
+    r"\d+\s+(?:things|reasons|takeaways|storylines)\s+to\s+(?:watch|know|expect)|"
+    r"breakout\s+candidates?|"
+    r"sleeper\s+(?:picks?|candidates?)|"
+    # Product / shopping listicles bleeding in from lifestyle feeds
+    # (GQ Sports, Men's Health, Esquire, etc.).
+    r"\d+\s+best\s+(?:\w+\s+){0,3}for\s+(?:men|women|him|her|kids?|guys|gals)|"
+    r"according\s+to\s+(?:our|the|gq|esquire|men\'?s\s+health|women\'?s\s+health)\s+editors?|"
+    # Tournament/season listicles — squad lists, fixture roundups, etc.
+    r"every\s+(?:player|team|club|fight|match|game)\s+(?:at|in|on)\b|"
+    r"complete\s+(?:guide|list|schedule)\s+to"
     r")\b",
     re.IGNORECASE,
 )
