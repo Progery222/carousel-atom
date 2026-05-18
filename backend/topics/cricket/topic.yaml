@@ -1,0 +1,45 @@
+slug: cricket
+display_name: "Cricket Daily"
+language: en
+
+sources:
+  - kind: rss
+    name: ESPNcricinfo
+    feed: https://www.espncricinfo.com/rss/content/story/feeds/0.xml
+  - kind: rss
+    name: BBC Cricket
+    feed: https://feeds.bbci.co.uk/sport/cricket/rss.xml
+  - kind: rss
+    name: Sky Sports Cricket
+    feed: https://www.skysports.com/rss/12040
+
+# ESPN Cricinfo covers club + minor formats heavily — drop county /
+# domestic feeds since the carousel is for international fans.
+blocklist:
+  - "county championship"
+  - "county cricket"
+  - "ranji trophy"
+  - "vitality blast"
+  - "the hundred draft"
+  - "women's youth"
+
+brand:
+  colors:
+    bg: "#0E2818"            # cricket pitch grass
+    accent: "#B6332E"         # leather-ball red
+    accent_light: "#E66E66"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nCRICKET NEWS"
+  subtext: "EVERYTHING CRICKET, EVERY DAY"
+
+caption:
+  intro: "🏏 CRICKET UPDATE 🏏"
+  hashtags: [cricket, cricketnews, ipl, t20, testcricket, odi]
+  style: bullet
+  llm_rewrite: false
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: Europe/London, send_hours: [8, 13, 19]}
+delivery: {telegram_chat: env:CHAT_CRICKET}

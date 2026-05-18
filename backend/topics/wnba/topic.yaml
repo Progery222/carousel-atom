@@ -1,0 +1,41 @@
+slug: wnba
+display_name: "WNBA Daily"
+language: en
+
+sources:
+  - kind: rss
+    name: CBS Sports WNBA
+    feed: https://www.cbssports.com/rss/headlines/wnba/
+  - kind: rss
+    name: Yahoo Sports WNBA
+    feed: https://sports.yahoo.com/wnba/rss/
+  - kind: rss
+    name: Swish Appeal
+    feed: https://www.swishappeal.com/rss/current.xml
+
+# Drop cross-league bleed (some aggregators mix WNBA + Athletes Unlimited).
+blocklist:
+  - "athletes unlimited"
+  - "ncaa women"
+  - "college women"
+
+brand:
+  colors:
+    bg: "#0A0A0A"            # carrying NBA-style heritage
+    accent: "#FF6B00"         # WNBA orange (lighter than NBA navy)
+    accent_light: "#FFA361"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nWNBA NEWS"
+  subtext: "EVERYTHING WNBA, EVERY DAY"
+
+caption:
+  intro: "🏀 WNBA UPDATE 🏀"
+  hashtags: [wnba, womensbasketball, wnbanews, wnbadaily, hoops]
+  style: bullet
+  llm_rewrite: false
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: America/New_York, send_hours: [9, 14, 20]}
+delivery: {telegram_chat: env:CHAT_WNBA}

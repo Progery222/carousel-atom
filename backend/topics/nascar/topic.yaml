@@ -1,0 +1,44 @@
+slug: nascar
+display_name: "NASCAR Daily"
+language: en
+
+sources:
+  - kind: rss
+    name: Frontstretch
+    feed: https://frontstretch.com/feed/
+  - kind: rss
+    name: CBS Sports NASCAR
+    feed: https://www.cbssports.com/rss/headlines/nascar/
+  - kind: rss
+    name: Racing News
+    feed: https://racingnews.co/feed/
+
+# Drop bleed from other racing series — NASCAR covers Cup/Xfinity/Trucks;
+# IndyCar and dirt-track are separate audiences.
+blocklist:
+  - "indycar"
+  - "indy 500"
+  - "dirt track"
+  - "world of outlaws"
+  - "modified tour"
+
+brand:
+  colors:
+    bg: "#0A1929"            # American racing navy
+    accent: "#C8102E"         # NASCAR red
+    accent_light: "#FF6B5A"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nNASCAR NEWS"
+  subtext: "EVERYTHING NASCAR, EVERY DAY"
+
+caption:
+  intro: "🏁 NASCAR UPDATE 🏁"
+  hashtags: [nascar, racing, motorsport, cupseries, nascarnews, dieselthemovie]
+  style: bullet
+  llm_rewrite: false
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: America/New_York, send_hours: [9, 14, 20]}
+delivery: {telegram_chat: env:CHAT_NASCAR}

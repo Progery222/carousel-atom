@@ -1,0 +1,43 @@
+slug: golf
+display_name: "Golf Daily"
+language: en
+
+sources:
+  - kind: rss
+    name: CBS Sports Golf
+    feed: https://www.cbssports.com/rss/headlines/golf/
+  - kind: rss
+    name: Golf.com
+    feed: https://golf.com/feed/
+
+# Drop equipment promos and "best of" gear listicles (massive category
+# in golf media, almost all of which are content marketing).
+blocklist:
+  - "best clubs"
+  - "best putters"
+  - "best balls"
+  - "gear review"
+  - "club test"
+  - "deal of the day"
+  - "amazon deal"
+
+brand:
+  colors:
+    bg: "#0E2F1E"            # fairway dark green
+    accent: "#D4AF37"         # trophy gold
+    accent_light: "#F2D87A"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nGOLF NEWS"
+  subtext: "EVERYTHING GOLF, EVERY DAY"
+
+caption:
+  intro: "⛳ GOLF UPDATE ⛳"
+  hashtags: [golf, pga, livgolf, golfnews, golfdaily, pgatour]
+  style: bullet
+  llm_rewrite: false
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: America/New_York, send_hours: [9, 14, 20]}
+delivery: {telegram_chat: env:CHAT_GOLF}

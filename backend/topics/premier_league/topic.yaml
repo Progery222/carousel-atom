@@ -1,0 +1,50 @@
+slug: premier_league
+display_name: "Premier League Daily"
+language: en
+
+sources:
+  - kind: rss
+    name: BBC Premier League
+    feed: https://feeds.bbci.co.uk/sport/football/premier-league/rss.xml
+  - kind: rss
+    name: Sky Sports Premier League
+    feed: https://www.skysports.com/rss/12040
+  - kind: rss
+    name: Guardian Premier League
+    feed: https://www.theguardian.com/football/premierleague/rss
+  - kind: rss
+    name: CBS Sports Soccer
+    feed: https://www.cbssports.com/rss/headlines/soccer/
+
+# CBS Sports Soccer covers all leagues; the blocklist keeps the topic
+# tightly Premier-League-only. Champions League stories that involve
+# PL clubs are still fair game.
+blocklist:
+  - "la liga"
+  - "bundesliga"
+  - "serie a"
+  - "ligue 1"
+  - "mls"
+  - "concacaf"
+  - "national women's soccer"
+
+brand:
+  colors:
+    bg: "#37003C"            # iconic PL purple
+    accent: "#04F5FF"         # neon-cyan PL accent
+    accent_light: "#9DFAFE"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nPREMIER LEAGUE"
+  subtext: "EVERYTHING EPL, EVERY DAY"
+
+caption:
+  intro: "⚽ PREMIER LEAGUE ⚽"
+  hashtags: [premierleague, epl, football, soccer, premiership, plnews]
+  style: bullet
+  llm_rewrite: false
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: Europe/London, send_hours: [9, 14, 20]}
+delivery: {telegram_chat: env:CHAT_PREMIER_LEAGUE}

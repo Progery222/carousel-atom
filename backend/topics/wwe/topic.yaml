@@ -1,0 +1,50 @@
+slug: wwe
+display_name: "WWE Daily"
+language: en
+
+sources:
+  - kind: rss
+    name: Wrestling Inc
+    feed: https://www.wrestlinginc.com/feed/
+  - kind: rss
+    name: Fightful
+    feed: https://www.fightful.com/feed
+  - kind: rss
+    name: PWMania
+    feed: https://www.pwmania.com/feed
+  - kind: rss
+    name: 411 Wrestling
+    feed: https://411mania.com/wrestling/feed/
+
+# Drop AEW / NJPW / indie bleed unless we're explicitly making a
+# "Pro Wrestling" topic. WWE audience overlaps but the brand confusion
+# is real on TikTok.
+blocklist:
+  - "aew dynamite"
+  - "aew collision"
+  - "all elite wrestling"
+  - "njpw"
+  - "impact wrestling"
+  - "indie wrestling"
+  - "tna wrestling"
+
+brand:
+  colors:
+    bg: "#0F0F0F"            # WWE-classic black
+    accent: "#FFD700"         # title-belt gold
+    accent_light: "#FFE680"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nWWE NEWS"
+  subtext: "EVERYTHING WWE, EVERY DAY"
+
+caption:
+  intro: "🤼 WWE UPDATE 🤼"
+  hashtags: [wwe, wwf, wrestling, prowrestling, wweraw, smackdown]
+  style: bullet
+  llm_rewrite: false
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: America/New_York, send_hours: [9, 14, 20]}
+delivery: {telegram_chat: env:CHAT_WWE}
