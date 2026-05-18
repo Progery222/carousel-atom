@@ -482,11 +482,13 @@ def run_once(topic_slug: str, design_slug: str = "newsflash",
                 a.title = rewriter(a.title)
         _section("llm rewrite", t)
 
-    # Meta-topics adopt the brand of the sport that dominates this
-    # particular digest, so a Sports Digest skewed toward F1 today renders
-    # in F1 red, and one skewed toward NBA tomorrow renders in NBA orange.
-    # Falls back to the meta-topic's own brand if the dominant child
-    # can't be loaded.
+    # Meta-topics adopt the brand colours of the sport that dominates
+    # this particular digest, so a Sports Digest skewed toward F1 today
+    # renders in F1 red, and one skewed toward NBA tomorrow renders in
+    # NBA orange. The CTA text stays on the meta-topic itself ("FOLLOW
+    # FOR DAILY SPORTS NEWS") so the call-to-action stays generic — we
+    # don't want "SUBSCRIBE FOR THE LATEST F1 NEWS DAILY" on a
+    # multi-sport digest.
     if topic.aggregate_from and selected:
         from collections import Counter
         counts = Counter(
@@ -497,7 +499,6 @@ def run_once(topic_slug: str, design_slug: str = "newsflash",
             try:
                 child = load_topic(dominant)
                 topic.brand = child.brand
-                topic.cta = child.cta
                 log.info("dynamic brand from dominant child '%s'", dominant)
             except FileNotFoundError:
                 log.warning("dominant child '%s' not loadable — keeping meta brand", dominant)
