@@ -132,6 +132,31 @@ def test_qualifying_result_still_passes():
     assert ok
 
 
+def test_these_n_players_listicle_dropped():
+    ok, reason = is_news_content(
+        make("These 22 players can sign for your club on a free transfer right now")
+    )
+    assert not ok
+    assert "listicle" in reason
+
+
+def test_these_n_foods_listicle_dropped():
+    ok, reason = is_news_content(
+        make("These 10 Foods Are High in Potassium and Might Just Lower Your Blood Pressure")
+    )
+    assert not ok
+    assert "listicle" in reason
+
+
+def test_three_word_news_still_passes():
+    # Make sure a real "These" headline that ISN'T a listicle still
+    # passes. (Listicles always have a digit immediately after.)
+    ok, _ = is_news_content(
+        make("These star players need surgery before the playoffs begin in October")
+    )
+    assert ok
+
+
 def test_video_url_dropped():
     art = make("Highlights from the latest game")
     art.url = "https://espn.com/video/highlights"

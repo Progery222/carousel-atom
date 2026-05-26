@@ -231,8 +231,14 @@ def _split_headline_for_bait(headline: str) -> tuple[str, str]:
                 best_dist = abs(i - target)
                 best_i = i
     if best_i == -1:
-        # No preposition — pure midpoint word split.
+        # No preposition landed in the comfortable middle band — pick
+        # the midpoint, then walk forward past leading function words
+        # so the reveal slide doesn't open with an orphaned "THE" / "OF"
+        # / "TO" that reads as broken English.
+        LEAD_STOPS = {"THE", "A", "AN", "OF", "TO", "IN", "ON"}
         best_i = max(2, n // 2)
+        while best_i < n - 1 and upper[best_i] in LEAD_STOPS:
+            best_i += 1
 
     bait_words = words[:best_i]
     reveal_words = words[best_i:]

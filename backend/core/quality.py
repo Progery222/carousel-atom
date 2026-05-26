@@ -51,6 +51,18 @@ _LIST_FLUFF_RE = re.compile(
     re.IGNORECASE,
 )
 
+# "These N X …" listicle promo. Catches the residual cross-bleed from
+# GQ Sports / FourFourTwo that the more specific patterns miss:
+#   "These 22 players can sign for your club on a free transfer right now"
+#   "These 10 Foods Are High in Potassium…"
+# A title that opens with a demonstrative + count + plural noun is a
+# listicle 99% of the time — there's no single-event news story shaped
+# this way.
+_THESE_LISTICLE_RE = re.compile(
+    r"^\s*these\s+\d+\s+\w+",
+    re.IGNORECASE,
+)
+
 # Promo / guide patterns — not factual news.
 _GUIDE_RE = re.compile(
     r"^(?:"
@@ -180,6 +192,8 @@ def is_news_content(article: Article) -> tuple[bool, str]:
         return False, f"non-news title pattern: {m.group(0)!r}"
     if _LIST_FLUFF_RE.search(title):
         return False, "listicle-fluff title"
+    if _THESE_LISTICLE_RE.search(title):
+        return False, "listicle: 'these N …' format"
     if _GUIDE_RE.search(title):
         return False, "guide/promo title"
     if _COMMERCE_RE.search(title):
