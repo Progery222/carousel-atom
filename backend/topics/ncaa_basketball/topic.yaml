@@ -1,0 +1,37 @@
+slug: ncaa_basketball
+display_name: "NCAA Basketball Daily"
+language: en
+
+sources:
+  - kind: rss
+    name: CBS College Basketball
+    feed: https://www.cbssports.com/rss/headlines/college-basketball/
+  - kind: rss
+    name: Yahoo College Basketball
+    feed: https://sports.yahoo.com/college-basketball/rss/
+
+blocklist:
+  - "high school basketball"
+  - "junior college"
+  - "naia"
+
+brand:
+  colors:
+    bg: "#13072E"            # tournament purple-black
+    accent: "#FF7A1A"         # basketball orange
+    accent_light: "#FFB870"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nCOLLEGE HOOPS"
+  subtext: "EVERYTHING CBB, EVERY DAY"
+
+caption:
+  intro: "🏀 NCAA HOOPS 🏀"
+  hashtags: [collegebasketball, cbb, ncaabasketball, marchmadness, finalfour]
+  style: bullet
+  llm_rewrite: false
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: America/New_York, send_hours: [9, 14, 20]}
+delivery: {telegram_chat: env:CHAT_NCAA_BASKETBALL}

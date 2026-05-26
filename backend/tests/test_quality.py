@@ -49,6 +49,148 @@ def test_real_news_passes():
     assert ok
 
 
+# Multi-event preview / teaser patterns that escaped the original regex
+# and ended up on Sports Digest slides as ambiguous "predictions" headlines.
+def test_game_by_game_predictions_dropped():
+    ok, reason = is_news_content(
+        make("Raiders game-by-game predictions after 2026 NFL Schedule release")
+    )
+    assert not ok
+    assert "teaser" in reason
+
+
+def test_schedule_release_dropped():
+    ok, reason = is_news_content(
+        make("'Thursday Night Football' schedule release: who plays Thanksgiving night")
+    )
+    assert not ok
+    assert "teaser" in reason
+
+
+def test_ranking_all_dropped():
+    ok, reason = is_news_content(
+        make("Ranking all 15 TNF matchups from worst to best for the 2026 season")
+    )
+    assert not ok
+    # Either ranking_all in non-news, or worst-to-best in teaser — both work.
+    assert "non-news" in reason or "teaser" in reason
+
+
+def test_watch_live_as_dropped():
+    ok, reason = is_news_content(
+        make("Nurburgring 24 Hours Day 2: Watch live as Verstappen takes on Top Qualifying")
+    )
+    assert not ok
+    assert "non-news" in reason
+
+
+def test_bold_predictions_dropped():
+    ok, reason = is_news_content(
+        make("5 bold predictions for the NFL playoffs that nobody saw coming")
+    )
+    assert not ok
+    assert "teaser" in reason
+
+
+def test_mock_draft_dropped():
+    ok, reason = is_news_content(
+        make("2026 NFL mock draft 4.0: surprises in the first round")
+    )
+    assert not ok
+    assert "teaser" in reason
+
+
+def test_takeaways_recap_still_passes():
+    # Real news: post-game recap with the score. Should NOT be filtered.
+    ok, _ = is_news_content(
+        make("Takeaways from the Ducks' 5-1 Loss to the Golden Knights, Vegas wins Series 4-2")
+    )
+    assert ok
+
+
+def test_shopping_listicle_dropped():
+    ok, reason = is_news_content(
+        make("12 Best Leather Sandals for Men 2026, According to GQ Editors")
+    )
+    assert not ok
+    assert "teaser" in reason
+
+
+def test_every_player_listicle_dropped():
+    ok, reason = is_news_content(
+        make("World Cup 2026 squads: Every player at this summer's tournament")
+    )
+    assert not ok
+    assert "teaser" in reason
+
+
+def test_qualifying_result_still_passes():
+    # Real news: qualifying placement is a discrete event result.
+    ok, _ = is_news_content(
+        make("Where Max Verstappen qualified for his Nurburgring 24 Hours debut")
+    )
+    assert ok
+
+
+def test_these_n_players_listicle_dropped():
+    ok, reason = is_news_content(
+        make("These 22 players can sign for your club on a free transfer right now")
+    )
+    assert not ok
+    assert "listicle" in reason
+
+
+def test_these_n_foods_listicle_dropped():
+    ok, reason = is_news_content(
+        make("These 10 Foods Are High in Potassium and Might Just Lower Your Blood Pressure")
+    )
+    assert not ok
+    assert "listicle" in reason
+
+
+def test_three_word_news_still_passes():
+    # Make sure a real "These" headline that ISN'T a listicle still
+    # passes. (Listicles always have a digit immediately after.)
+    ok, _ = is_news_content(
+        make("These star players need surgery before the playoffs begin in October")
+    )
+    assert ok
+
+
+def test_schedule_odds_container_dropped():
+    ok, reason = is_news_content(
+        make("2026 NBA Finals schedule, odds: Knicks await Thunder or Spurs")
+    )
+    assert not ok
+    assert "teaser" in reason
+
+
+def test_kit_picker_marketing_dropped():
+    ok, reason = is_news_content(
+        make("Pick your perfect World Cup 2026 look with FourFourTwo's kit picker")
+    )
+    assert not ok
+    assert "teaser" in reason
+
+
+def test_squad_list_listicle_dropped():
+    ok, reason = is_news_content(
+        make("World Cup 2026 squads revealed: Every team and roster confirmed")
+    )
+    assert not ok
+    # Either "every team" or "2026 squads" catches it — both are teaser.
+    assert "teaser" in reason
+
+
+def test_real_game_recap_still_passes_with_odds_word():
+    # Headlines that mention "odds" but aren't a betting preview should
+    # still pass — e.g. "Underdog beats odds, …" is a real story.
+    ok, _ = is_news_content(
+        make("Verstappen beats the odds, wins from 12th on the grid at Canadian GP")
+    )
+    assert ok
+
+
 def test_video_url_dropped():
     art = make("Highlights from the latest game")
     art.url = "https://espn.com/video/highlights"

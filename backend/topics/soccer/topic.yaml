@@ -93,3 +93,54 @@ caption:
 carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
 schedule: {timezone: Europe/London, send_hours: [10, 16, 21]}
 delivery: {telegram_chat: env:CHAT_SOCCER}
+
+# Styles — Transfer Expert vs. Football Daily Reporter from the sheet.
+styles:
+  transfers:
+    display_name: "Soccer Transfers"
+    cta:
+      headline: "FOLLOW\nFOR EVERY\nDEAL"
+      subtext: "FEES · WAGES · SELL-ON CLAUSES · DONE DEALS"
+    caption:
+      intro: "⚽ TRANSFER NEWS ⚽"
+    boost:
+      - signed
+      - signs
+      - signing
+      - transfer
+      - transferred
+      - done deal
+      - here we go
+      - agreement
+      - agreed
+      - fee
+      - clause
+      - extension
+      - extends
+      - loan
+      - loaned
+      - released
+      - free agent
+
+  daily_news:
+    display_name: "Soccer Daily News"
+    cta:
+      headline: "FOLLOW\nFOR DAILY\nSOCCER NEWS"
+      subtext: "MATCH RESULTS · TACTICS · STORYLINES"
+    caption:
+      intro: "⚽ SOCCER DAILY ⚽"
+    boost:
+      - winner
+      - victory
+      - thriller
+      - hat-trick
+      - hat trick
+      - red card
+      - var
+      - controversy
+      - injury
+      - tactical
+      - lineup
+      - formation
+      - comeback
+      - upset

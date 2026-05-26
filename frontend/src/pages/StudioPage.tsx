@@ -88,6 +88,9 @@ export default function StudioPage() {
   const [designs, setDesigns] = useState<Design[]>([]);
   const [topic, setTopic] = useState<string | null>(null);
   const [design, setDesign] = useState<string | null>(null);
+  // Sub-style picked under the active topic. Null = base config.
+  // Resets whenever the topic changes.
+  const [style, setStyle] = useState<string | null>(null);
 
   const [result, setResult] = useState<RenderResult | null>(null);
   const [caption, setCaption] = useState<string>("");
@@ -181,7 +184,7 @@ export default function StudioPage() {
         setCaption(r.caption);
         pushHistory(r, r.caption);
       } else {
-        const r = await renderCarousel(topic, design, false);
+        const r = await renderCarousel(topic, design, false, false, style);
         setResult(r);
         setCaption(r.caption);
         pushHistory(r, r.caption);
@@ -228,7 +231,7 @@ export default function StudioPage() {
     setBatchProgress({ done: 0, total: count });
     try {
       for (let i = 0; i < count; i++) {
-        const r = await renderCarousel(topic, design, true);
+        const r = await renderCarousel(topic, design, true, false, style);
         setResult(r);
         setCaption(r.caption);
         pushHistory(r, r.caption);
@@ -379,7 +382,18 @@ export default function StudioPage() {
           </div>
         </div>
         <div className="flex-1 overflow-y-auto px-5 pb-4 space-y-7">
-          <TopicPicker topics={topics} selected={topic} onSelect={setTopic} />
+          <TopicPicker
+            topics={topics}
+            selected={topic}
+            onSelect={(slug) => {
+              setTopic(slug);
+              // Topic change wipes the sub-style so we never carry
+              // (e.g.) NBA's "drama" into NFL's style picker.
+              setStyle(null);
+            }}
+            selectedStyle={style}
+            onSelectStyle={setStyle}
+          />
           <DesignPicker designs={designs} selected={design} onSelect={setDesign} />
           <div>
             <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-300 mb-3 px-1">

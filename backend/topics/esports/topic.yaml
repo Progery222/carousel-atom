@@ -1,0 +1,43 @@
+slug: esports
+display_name: "Esports Daily"
+language: en
+
+sources:
+  - kind: rss
+    name: The Loadout
+    feed: https://www.theloadout.com/feed
+  - kind: rss
+    name: Dot Esports
+    feed: https://dotesports.com/feed
+
+# The Loadout publishes both pure esports + general gaming. Drop the
+# pure gaming/review content since this topic is competitive scene.
+blocklist:
+  - "game review"
+  - "best games"
+  - "single player"
+  - "early access"
+  - "release date"
+  - "trailer reveals"
+  - "console exclusive"
+
+brand:
+  colors:
+    bg: "#100A2E"            # esports stage purple-black
+    accent: "#00FF85"         # neon green
+    accent_light: "#7DFFB5"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nESPORTS NEWS"
+  subtext: "EVERYTHING ESPORTS, EVERY DAY"
+
+caption:
+  intro: "🎮 ESPORTS UPDATE 🎮"
+  hashtags: [esports, gaming, lol, valorant, csgo, dota2, esportsnews]
+  style: bullet
+  llm_rewrite: false
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: America/Los_Angeles, send_hours: [9, 14, 20]}
+delivery: {telegram_chat: env:CHAT_ESPORTS}

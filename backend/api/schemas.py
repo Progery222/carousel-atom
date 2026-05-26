@@ -13,6 +13,10 @@ class TopicOut(BaseModel):
     name: str
     source_count: int
     news_per_carousel: int
+    featured: bool = False
+    # Style slugs the user can pass to /render for this topic. Empty
+    # list = no styles defined; the topic uses its base config only.
+    styles: list[str] = []
 
 
 class DesignOut(BaseModel):
@@ -30,6 +34,7 @@ class DeliveryOut(BaseModel):
 class RenderRequest(BaseModel):
     topic: str
     design: str
+    style: Optional[str] = None  # topic-defined sub-tone (e.g. "drama", "stats")
     mark_seen: bool = True
     cross_topic_dedup: bool = False
     deliver: str = ""  # adapter slug, e.g. "telegram"; empty = no delivery

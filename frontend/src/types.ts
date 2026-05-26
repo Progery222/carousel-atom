@@ -3,6 +3,9 @@ export interface Topic {
   name: string;
   source_count: number;
   news_per_carousel: number;
+  featured?: boolean;
+  /** Per-tone sub-styles available for this topic (e.g. NBA → ["news", "drama", "history"]). Empty / missing = topic has no sub-styles. */
+  styles?: string[];
 }
 
 export interface Design {

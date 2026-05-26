@@ -414,15 +414,8 @@ def _draw_brand_disc(img: Image.Image, topic: TopicConfig,
 
 def _make_cta_slide(slide_num: int, total: int, topic: TopicConfig,
                     output_dir: Path, hero_image: str | None = None) -> str:
-    """CTA slide.
-
-    Used to be the same shape as a news slide (full-bleed photo top +
-    headline bottom). That recycled the article hero photo, which looked
-    awkward on the very last slide ("FOLLOW FOR DAILY SOCCER NEWS" pinned
-    over a player's face).
-
-    New layout: pure black background, centred topic emblem (or its
-    placeholder when no logo is shipped yet), headline beneath.
+    """CTA slide: pure black background with the topic's CTA headline
+    centred. No brand disc — the call-to-action text is the whole slide.
     `hero_image` is intentionally ignored.
     """
     del hero_image  # explicitly unused — kept for backward signature
@@ -430,24 +423,17 @@ def _make_cta_slide(slide_num: int, total: int, topic: TopicConfig,
     brand = topic.brand
     img = Image.new("RGB", (W, H), BLACK)
 
-    # Brand disc — sits a bit above the upper-third so it doesn't crowd
-    # the headline that lands in the lower half.
-    disc_y = int(H * 0.24)
-    disc_diameter = int(min(W, H) * 0.30)
-    _draw_brand_disc(img, topic, center_y=disc_y, diameter=disc_diameter)
-
     draw = ImageDraw.Draw(img)
 
     margin = 60
     max_width = W - margin * 2
-    safe_bottom = H - 130
 
     raw = topic.cta.headline.replace("\n", " ").strip()
     max_lines = 4
     font, lines, line_h = _fit_headline(raw, max_width, max_lines)
     accent_words = {_strip(w).upper() for w in lines[-1]} if lines else set()
     text_h = len(lines) * (line_h + 4)
-    headline_y = safe_bottom - text_h
+    headline_y = (H - text_h) // 2
     _draw_headline(draw, font, lines, margin, max_width, headline_y,
                    line_h, accent_words, accent_color=brand.accent)
 

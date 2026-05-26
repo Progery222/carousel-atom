@@ -1,0 +1,43 @@
+slug: tennis
+display_name: "Tennis Daily"
+language: en
+
+sources:
+  - kind: rss
+    name: CBS Sports Tennis
+    feed: https://www.cbssports.com/rss/headlines/tennis/
+  - kind: rss
+    name: Tennis 365
+    feed: https://www.tennis365.com/feed
+  - kind: rss
+    name: Yahoo Sports Tennis
+    feed: https://sports.yahoo.com/tennis/rss/
+
+# Drop cross-tour bleed (junior/futures circuits are not main tour news).
+blocklist:
+  - "futures"
+  - "challenger tour"
+  - "junior tournament"
+  - "wheelchair"
+  - "qualifier draw"
+
+brand:
+  colors:
+    bg: "#0A2818"            # deep court green
+    accent: "#D4F542"        # tennis-ball yellow-green
+    accent_light: "#EAFA8E"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nTENNIS NEWS"
+  subtext: "EVERYTHING TENNIS, EVERY DAY"
+
+caption:
+  intro: "🎾 TENNIS UPDATE 🎾"
+  hashtags: [tennis, atp, wta, tennisnews, tennisdaily, grandslam]
+  style: bullet
+  llm_rewrite: false
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: America/New_York, send_hours: [9, 14, 20]}
+delivery: {telegram_chat: env:CHAT_TENNIS}

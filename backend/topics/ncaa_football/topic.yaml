@@ -1,0 +1,40 @@
+slug: ncaa_football
+display_name: "NCAA Football Daily"
+language: en
+
+sources:
+  - kind: rss
+    name: CBS College Football
+    feed: https://www.cbssports.com/rss/headlines/college-football/
+  - kind: rss
+    name: Yahoo College Football
+    feed: https://sports.yahoo.com/college-football/rss/
+
+# Drop NFL bleed (CBS sometimes mixes draft analysis under CFB) and the
+# heavy weekly betting-preview content (extras to the teaser regex).
+blocklist:
+  - "nfl draft"
+  - "nfl combine"
+  - "high school football"
+  - "fcs"
+
+brand:
+  colors:
+    bg: "#1F0E0E"            # autumn maroon
+    accent: "#D77A1F"         # stadium amber
+    accent_light: "#FFB377"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nCOLLEGE FOOTBALL"
+  subtext: "EVERYTHING CFB, EVERY DAY"
+
+caption:
+  intro: "🏈 NCAA FOOTBALL 🏈"
+  hashtags: [collegefootball, cfb, ncaafootball, sec, big10, acc]
+  style: bullet
+  llm_rewrite: false
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: America/New_York, send_hours: [9, 14, 20]}
+delivery: {telegram_chat: env:CHAT_NCAA_FOOTBALL}

@@ -1,0 +1,59 @@
+slug: sports_now
+display_name: "Sports Digest"
+language: en
+
+# Meta-topic: aggregates fresh news from every active sports topic into
+# a single digest of "what's hot in sports right now". Sources, blocklists
+# and boost lists are pulled in from each named child at load time
+# (see core/topic_loader.py::load_topic). The pipeline then balances the
+# selection by sport (not by publisher) so the result isn't 5× NBA, and
+# the dominant sport's brand is applied at render time.
+#
+# `aggregate_from` deliberately excludes Fitness (gym/wellness guides,
+# not news velocity content) but includes Athlete Lifestyle (TMZ Sports,
+# GQ Sports, Forbes — sports-adjacent celebrity/business stories).
+aggregate_from:
+  - f1
+  - mlb
+  - nba
+  - nfl
+  - nhl
+  - soccer
+  - ufc
+  - lifestyle
+
+# Pinned at the top of the sidebar in the studio UI.
+featured: true
+
+# No own sources — everything flows in via aggregate_from.
+sources: []
+
+# Fallback brand if no dominant child can be resolved (e.g. empty
+# digest). The render step swaps these for the dominant sport's brand
+# when there is one. Neutral black + red for an ESPN-ish vibe.
+brand:
+  colors:
+    bg: "#0A0A0A"
+    accent: "#E10600"
+    accent_light: "#FF4A4A"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nSPORTS NEWS"
+  subtext: "ALL SPORTS · ONE FEED"
+
+caption:
+  intro: "🔥 TOP SPORTS NEWS 🔥"
+  hashtags: [sports, sportsnews, dailysports, sportshighlights, sportsdaily]
+  style: bullet
+  llm_rewrite: false
+
+carousel:
+  slides_per_carousel: 6
+  news_per_carousel: 5
+  width: 1080
+  height: 1350
+
+schedule:
+  timezone: UTC
+  send_hours: [9, 15, 21]

@@ -30,7 +30,9 @@ _NON_NEWS_TITLE_RE = re.compile(
     r"\b("
     r"quiz|poll|gallery|opinion|"
     r"ranked|rated|rating:|"
+    r"ranking\s+(?:all|every|the\s+\d+|all\s+\d+)|"
     r"watch:|video:|photos?:|"
+    r"watch\s+live\s+as|"
     r"guess\s+(?:the|who|which)|"
     r"can\s+you\s+(?:name|guess|spot|tell)|"
     r"on\s+this\s+day|years?\s+ago\s+today|"
@@ -46,6 +48,18 @@ _NON_NEWS_TITLE_RE = re.compile(
 _LIST_FLUFF_RE = re.compile(
     r"^\d+\s+(tricky|fun|wild|weird|crazy|shocking|mind[-\s]?blowing|"
     r"insane|amazing|awkward|hilarious|brutal|savage|epic)\b",
+    re.IGNORECASE,
+)
+
+# "These N X …" listicle promo. Catches the residual cross-bleed from
+# GQ Sports / FourFourTwo that the more specific patterns miss:
+#   "These 22 players can sign for your club on a free transfer right now"
+#   "These 10 Foods Are High in Potassium…"
+# A title that opens with a demonstrative + count + plural noun is a
+# listicle 99% of the time — there's no single-event news story shaped
+# this way.
+_THESE_LISTICLE_RE = re.compile(
+    r"^\s*these\s+\d+\s+\w+",
     re.IGNORECASE,
 )
 
@@ -114,7 +128,40 @@ _TEASER_RE = re.compile(
     r"\d+[-\s]way\s+parlay|parlay\s+(?:pick|return|hit|of)|"
     r"\bsame[-\s]game\s+parlay|"
     r"against\s+the\s+spread|"
-    r"\bover/under\b|over\s+or\s+under"
+    r"\bover/under\b|over\s+or\s+under|"
+    # Multi-event preview content — promises predictions/breakdowns for
+    # a series of upcoming events, lives only in the article body.
+    # Pattern: "Raiders game-by-game predictions after 2026 NFL Schedule release"
+    r"(?:game|week|round|day)[-\s]by[-\s](?:game|week|round|day)|"
+    r"schedule\s+(?:release|reveal|drop|breakdown)|"
+    r"mock\s+draft|"
+    r"bold\s+predictions?|"
+    r"way[-\s]?too[-\s]early|"
+    r"predictions?\s+for\s+(?:every|all|the|each|next|\d+)|"
+    r"(?:bold|wild|hot|fearless)\s+takes?|"
+    r"(?:from\s+)?worst\s+to\s+best|"
+    r"best\s+to\s+worst|"
+    r"things\s+to\s+watch|"
+    r"\d+\s+(?:things|reasons|takeaways|storylines)\s+to\s+(?:watch|know|expect)|"
+    r"breakout\s+candidates?|"
+    r"sleeper\s+(?:picks?|candidates?)|"
+    # Product / shopping listicles bleeding in from lifestyle feeds
+    # (GQ Sports, Men's Health, Esquire, etc.).
+    r"\d+\s+best\s+(?:\w+\s+){0,3}for\s+(?:men|women|him|her|kids?|guys|gals)|"
+    r"according\s+to\s+(?:our|the|gq|esquire|men\'?s\s+health|women\'?s\s+health)\s+editors?|"
+    # Tournament/season listicles — squad lists, fixture roundups, etc.
+    r"every\s+(?:player|team|club|fight|match|game)\s+(?:at|in|on)\b|"
+    r"complete\s+(?:guide|list|schedule)\s+to|"
+    # "Schedule, odds:" container titles — the article body holds the
+    # actual betting/matchup info, not the headline.
+    r"schedule[,:]\s*(?:odds|picks|preview|predictions?)|"
+    r"\bodds[,:]\s*(?:schedule|picks|preview|predictions?)|"
+    # Kit/jersey marketing tools rather than news events.
+    r"\bkit\s+picker|\bjersey\s+picker|\bpick\s+your\s+perfect|"
+    # Tournament roster listicles — "X 2026 squads", "Squad list for…"
+    r"\b\d{4}\s+squads?\b|\bsquad\s+(?:list|roster|reveal)|"
+    # Style/fashion picker promos (FourFourTwo, GQ).
+    r"\bpick\s+your\s+(?:perfect|favourite|favorite)"
     r")\b",
     re.IGNORECASE,
 )
@@ -155,6 +202,8 @@ def is_news_content(article: Article) -> tuple[bool, str]:
         return False, f"non-news title pattern: {m.group(0)!r}"
     if _LIST_FLUFF_RE.search(title):
         return False, "listicle-fluff title"
+    if _THESE_LISTICLE_RE.search(title):
+        return False, "listicle: 'these N …' format"
     if _GUIDE_RE.search(title):
         return False, "guide/promo title"
     if _COMMERCE_RE.search(title):
@@ -372,7 +421,8 @@ def score_article(a: Article, *, boost: list[str] | None = None) -> float:
 
 
 def balance_sources(articles: list[Article], count: int,
-                    *, max_per_source: int | None = None) -> list[Article]:
+                    *, max_per_source: int | None = None,
+                    key=None) -> list[Article]:
     """Round-robin pick across sources so a carousel doesn't end up all
     from one outlet — the F1 carousel was a perfect demo, every slide
     came from formula1.com and they all shared the same studio image.
@@ -380,17 +430,23 @@ def balance_sources(articles: list[Article], count: int,
     Articles are expected to be pre-sorted by score (best first). The
     round-robin then guarantees source diversity inside the top-N.
 
-    `max_per_source` caps how many slots any single outlet can claim.
+    `max_per_source` caps how many slots any single group can claim.
     Defaults to `count // 2 + 1` — for a 5-slide carousel that means a
     single source can take at most 3 slots, leaving room for at least
     two other publishers.
+
+    `key` lets the caller pick the grouping dimension (defaults to
+    article source). Sports Digest uses `extra["origin_topic"]` so the
+    round-robin diversifies across sports instead of publishers.
     """
     if max_per_source is None:
         max_per_source = max(1, count // 2 + 1)
+    if key is None:
+        key = lambda a: a.source
 
     by_source: dict[str, list[Article]] = defaultdict(list)
     for a in articles:
-        by_source[a.source].append(a)
+        by_source[key(a)].append(a)
     # Trim each source's pool to the cap up-front so the round-robin
     # never even sees the surplus.
     for s in list(by_source):

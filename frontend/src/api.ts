@@ -82,6 +82,7 @@ export async function renderCarousel(
   design: string,
   markSeen = false,
   crossTopicDedup = false,
+  style: string | null = null,
 ): Promise<RenderResult> {
   const r = await fetch(`${API_BASE}/render`, {
     method: "POST",
@@ -91,6 +92,7 @@ export async function renderCarousel(
       design,
       mark_seen: markSeen,
       cross_topic_dedup: crossTopicDedup,
+      ...(style ? { style } : {}),
     }),
   });
   return renderOrThrow(r, "/render");

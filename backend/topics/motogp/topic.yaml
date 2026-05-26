@@ -1,0 +1,42 @@
+slug: motogp
+display_name: "MotoGP Daily"
+language: en
+
+sources:
+  - kind: rss
+    name: Motorsport.com MotoGP
+    feed: https://www.motorsport.com/rss/motogp/news/
+  - kind: rss
+    name: Autosport MotoGP
+    feed: https://www.autosport.com/rss/feed/motogp
+
+# Drop bleed from other 2-wheel series (WSBK = World Superbike,
+# Moto2/Moto3 are support series that share the same paddock).
+blocklist:
+  - "world superbike"
+  - "wsbk"
+  - "isle of man tt"
+  - "british superbike"
+  - "moto2 standings"
+  - "moto3 standings"
+
+brand:
+  colors:
+    bg: "#1A0809"            # paddock dark red
+    accent: "#DD1A21"         # Italian race red
+    accent_light: "#FF6B6B"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nMOTOGP NEWS"
+  subtext: "EVERYTHING MOTOGP, EVERY DAY"
+
+caption:
+  intro: "🏍 MOTOGP UPDATE 🏍"
+  hashtags: [motogp, motorcycleracing, motogpnews, twowheels, paddock]
+  style: bullet
+  llm_rewrite: false
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: Europe/Madrid, send_hours: [9, 14, 20]}
+delivery: {telegram_chat: env:CHAT_MOTOGP}

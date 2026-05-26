@@ -25,6 +25,9 @@ class Source:
     sort_by: str = "publishedAt"
     # Operational toggle so noisy sources can be muted without removing them.
     enabled: bool = True
+    # For aggregated meta-topics (e.g. sports_now): records which child
+    # topic this source came from. Empty for regular topics.
+    origin_topic: str = ""
 
 
 @dataclass
@@ -96,6 +99,23 @@ class TopicConfig:
     # your favourite teams/players land in the carousel even on busy
     # news days. Each match adds +1.5 to the score.
     boost: list[str] = field(default_factory=list)
+    # Meta-topic: list of child topic slugs to aggregate sources from.
+    # When non-empty, this topic's own `sources` list is augmented with
+    # all enabled sources from each named child topic (tagged with their
+    # `origin_topic`), and child blocklists/boosts are merged in. Used
+    # to build the "Sports Digest" pseudo-topic that pulls latest news
+    # across every sport. Children are loaded shallowly — their own
+    # `aggregate_from` is ignored to keep loading bounded.
+    aggregate_from: list[str] = field(default_factory=list)
+    # Cosmetic hint for the UI: when True the topic is rendered above
+    # the regular topic list (e.g. pinned "🔥 Sports Digest"). Has no
+    # effect on the pipeline.
+    featured: bool = False
+    # List of style slugs defined in the topic's `styles:` block. Used
+    # by the studio UI to render selectable sub-tones under the topic
+    # (e.g. NBA → news / drama / history). Pipeline ignores this; the
+    # actual style application happens inside `load_topic(slug, style=)`.
+    styles_available: list[str] = field(default_factory=list)
 
 
 def _hex(s: str) -> tuple[int, int, int]:
@@ -119,7 +139,19 @@ def _resolve_env(value: str | None) -> str | None:
     return value
 
 
-def load_topic(slug: str) -> TopicConfig:
+def load_topic(slug: str, style: str | None = None) -> TopicConfig:
+    """Load a topic. If `style` is supplied and the topic.yaml defines
+    a matching entry under `styles:`, the style's overrides are merged
+    into the base config — used to drive multiple per-tone accounts
+    off the same topic (e.g. NBA → News / Drama / History).
+
+    Style overrides:
+      - `display_name` replaces the base name
+      - `boost` extends the base boost list (additive)
+      - `blocklist` extends the base blocklist (additive)
+      - `cta.headline`, `cta.subtext` replace the base CTA copy
+      - `caption.intro` replaces the base caption intro
+    """
     base = TOPICS_DIR / slug
     cfg_path = base / "topic.yaml"
     if not cfg_path.exists():
@@ -128,7 +160,35 @@ def load_topic(slug: str) -> TopicConfig:
     with open(cfg_path, encoding="utf-8") as f:
         raw: dict[str, Any] = yaml.safe_load(f)
 
+    style_overrides: dict[str, Any] = {}
+    if style:
+        styles_block = raw.get("styles") or {}
+        if style in styles_block:
+            style_overrides = styles_block[style] or {}
+
     sources = [Source(**s) for s in raw.get("sources", [])]
+
+    # Meta-topic aggregation: pull sources (and boost) from each named
+    # child topic, tagging every source with its origin so the pipeline
+    # can balance results by sport and pick a dynamic brand from the
+    # dominant child.
+    #
+    # Child blocklists are deliberately *not* merged — they exist to
+    # filter cross-sport bleed inside a single child's feed (e.g.
+    # Soccer blocks "f1" / "nfl"), but in a digest those become
+    # false-positive drops of legitimate F1/NFL stories. The meta-topic
+    # uses its own (usually empty) blocklist as the global filter.
+    aggregate_from = list(raw.get("aggregate_from") or [])
+    merged_boost: list[str] = []
+    for child_slug in aggregate_from:
+        try:
+            child = load_topic(child_slug)
+        except FileNotFoundError:
+            continue
+        for src in child.sources:
+            tagged = Source(**{**src.__dict__, "origin_topic": child.slug})
+            sources.append(tagged)
+        merged_boost.extend(child.boost)
 
     b = raw["brand"]
     # `fonts` block is optional. When absent, designs fall back to the
@@ -144,9 +204,14 @@ def load_topic(slug: str) -> TopicConfig:
         font_body=_resolve(base, fonts.get("body", "")),
     )
 
-    cta = CTA(headline=raw["cta"]["headline"], subtext=raw["cta"].get("subtext", ""))
+    style_cta = (style_overrides.get("cta") or {}) if style_overrides else {}
+    style_caption = (style_overrides.get("caption") or {}) if style_overrides else {}
+    cta = CTA(
+        headline=style_cta.get("headline") or raw["cta"]["headline"],
+        subtext=style_cta.get("subtext") or raw["cta"].get("subtext", ""),
+    )
     cap = CaptionConfig(
-        intro=raw["caption"]["intro"],
+        intro=style_caption.get("intro") or raw["caption"]["intro"],
         hashtags=raw["caption"]["hashtags"],
         style=raw["caption"].get("style", "bullet"),
         llm_rewrite=raw["caption"].get("llm_rewrite", False),
@@ -157,7 +222,7 @@ def load_topic(slug: str) -> TopicConfig:
 
     return TopicConfig(
         slug=raw["slug"],
-        display_name=raw["display_name"],
+        display_name=style_overrides.get("display_name") or raw["display_name"],
         language=raw.get("language", "en"),
         sources=sources,
         brand=brand,
@@ -169,8 +234,11 @@ def load_topic(slug: str) -> TopicConfig:
         base_dir=base,
         hook_pool=_load_pool(raw.get("hook_pool"), "HookCopy"),
         cta_pool=_load_pool(raw.get("cta_pool"),   "CtaCopy"),
-        blocklist=list(raw.get("blocklist") or []),
-        boost=list(raw.get("boost") or []),
+        blocklist=list(raw.get("blocklist") or []) + list(style_overrides.get("blocklist") or []),
+        boost=list(raw.get("boost") or []) + merged_boost + list(style_overrides.get("boost") or []),
+        aggregate_from=aggregate_from,
+        featured=bool(raw.get("featured", False)),
+        styles_available=sorted((raw.get("styles") or {}).keys()),
     )
 
 

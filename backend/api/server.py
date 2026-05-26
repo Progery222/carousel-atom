@@ -279,7 +279,11 @@ def list_topics_impl() -> list[TopicOut]:
             name=t.display_name,
             source_count=len(t.sources),
             news_per_carousel=t.carousel.news_per_carousel,
+            featured=t.featured,
+            styles=t.styles_available,
         ))
+    # Featured topics first (Sports Digest pinned above the per-sport list).
+    out.sort(key=lambda x: (not x.featured, x.slug))
     return out
 
 
@@ -303,6 +307,7 @@ def render_impl(req: RenderRequest, *, base: str = "") -> RenderOut:
         mark_seen=req.mark_seen,
         cross_topic_dedup=req.cross_topic_dedup,
         deliver=req.deliver,
+        style=req.style,
     )
     if result["status"] != "ok":
         raise HTTPException(status_code=409, detail=result)

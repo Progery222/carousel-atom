@@ -1,0 +1,38 @@
+slug: olympics
+display_name: "Olympic Sports Daily"
+language: en
+
+# Single high-volume source. Olympics is event-driven — off-cycle the
+# feed mostly carries qualifier news, athlete profiles, and federation
+# politics. In Olympic years the volume explodes. Adding more feeds
+# during competition is a good follow-up.
+sources:
+  - kind: rss
+    name: BBC Olympics
+    feed: https://feeds.bbci.co.uk/sport/olympics/rss.xml
+
+blocklist:
+  - "paralympics organising"   # keep paralympic athletes content, drop bureaucratic news
+  - "ceremony schedule"
+  - "ticket sale"
+
+brand:
+  colors:
+    bg: "#001F3F"            # IOC navy
+    accent: "#D4AF37"         # medal gold
+    accent_light: "#F2D87A"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nOLYMPIC NEWS"
+  subtext: "EVERYTHING OLYMPIC, EVERY DAY"
+
+caption:
+  intro: "🥇 OLYMPIC UPDATE 🥇"
+  hashtags: [olympics, teamusa, olympicgames, paris2024, la2028, olympicnews]
+  style: bullet
+  llm_rewrite: false
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: Europe/London, send_hours: [9, 14, 20]}
+delivery: {telegram_chat: env:CHAT_OLYMPICS}

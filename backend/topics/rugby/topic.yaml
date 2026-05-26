@@ -1,0 +1,38 @@
+slug: rugby
+display_name: "Rugby Daily"
+language: en
+
+sources:
+  - kind: rss
+    name: BBC Rugby Union
+    feed: https://feeds.bbci.co.uk/sport/rugby-union/rss.xml
+  - kind: rss
+    name: Sky Sports Rugby
+    feed: https://www.skysports.com/rss/12321
+
+blocklist:
+  - "rugby league"          # different sport, league has own audience
+  - "schools rugby"
+  - "club xv"
+  - "academy"
+
+brand:
+  colors:
+    bg: "#0C1F12"            # rugby pitch dark forest
+    accent: "#FFFFFF"         # white kit
+    accent_light: "#E0E0E0"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nRUGBY NEWS"
+  subtext: "EVERYTHING RUGBY, EVERY DAY"
+
+caption:
+  intro: "🏉 RUGBY UPDATE 🏉"
+  hashtags: [rugby, rugbyunion, sixnations, rwc, rugbynews, premiership]
+  style: bullet
+  llm_rewrite: false
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: Europe/London, send_hours: [9, 14, 20]}
+delivery: {telegram_chat: env:CHAT_RUGBY}

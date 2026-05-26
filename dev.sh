@@ -29,6 +29,14 @@ DEPS=(
   # annotations at runtime on Python < 3.10. Cheap belt-and-suspenders
   # alongside the explicit Optional[X] use in api/server.py.
   'eval_type_backport;python_version<"3.10"'
+  # Optional but recommended: background removal for the editorial_white
+  # design's hero cutouts. `core/bg_remove.py` falls back gracefully when
+  # these are missing — the slide just renders with a soft-fade photo
+  # instead — so the install isn't strictly required, but the design
+  # looks markedly better with the cutout pipeline available.
+  'slowapi>=0.1.9'
+  'rembg>=2.0'
+  'onnxruntime>=1.20'
 )
 
 echo "→ killing any old carousel processes…"

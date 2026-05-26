@@ -92,13 +92,22 @@ def _fetch_source(src) -> list[Article]:
 
 
 def _collect(topic: TopicConfig) -> list[Article]:
-    """Pull every enabled source in parallel — IO-bound, threads are fine."""
+    """Pull every enabled source in parallel — IO-bound, threads are fine.
+
+    Articles are tagged with `extra["origin_topic"]` set to the child topic
+    slug for aggregated meta-topics, or the topic's own slug otherwise.
+    The pipeline uses this tag to balance the digest across sports and
+    pick a dynamic brand from the dominant origin.
+    """
     out: list[Article] = []
     enabled = [s for s in (topic.sources or []) if getattr(s, "enabled", True)]
     if not enabled:
         return out
     with ThreadPoolExecutor(max_workers=min(8, len(enabled))) as pool:
-        for batch in pool.map(_fetch_source, enabled):
+        for src, batch in zip(enabled, pool.map(_fetch_source, enabled)):
+            origin = src.origin_topic or topic.slug
+            for a in batch:
+                a.extra["origin_topic"] = origin
             out.extend(batch)
     return out
 
@@ -267,13 +276,22 @@ def _enrich_and_filter(articles: list[Article],
 
 
 def _trending_bonuses(articles: list[Article]) -> dict[int, float]:
-    """Cross-article entity overlap. If a name (Lewis Hamilton, Mudryk,
-    Manchester City) appears in more than one article in the candidate
-    pool, every article that mentions it gets a small score bump. The
-    pattern catches "this is what everyone is writing about today" and
-    pushes the truly hot stories to the top of the carousel.
+    """Cluster boost — a *multiplier* applied on top of the base score
+    for articles whose entities show up across multiple outlets in the
+    candidate pool.
 
-    Returns a mapping article-id → bonus (additive on top of base score).
+    Returns a mapping article-id → multiplier factor δ, where the
+    final ranked score is `base × (1 + δ)`:
+
+      δ = 0.5  → 3+ outlets cover the same entity (cluster, ×1.5)
+      δ = 0.2  → 2 outlets share the entity (mild cluster, ×1.2)
+      δ = 0.0  → unique story
+
+    The hype intuition: if 3+ independent feeds are writing about
+    Hamilton today, that story is what everyone's swiping for. The
+    multiplicative form spreads the cluster signal proportional to the
+    article's base quality — a high-quality story about a hot entity
+    leapfrogs both noisy hot stories and quiet quality stories.
     """
     from collections import Counter
     from core.text import extract_entities
@@ -286,18 +304,21 @@ def _trending_bonuses(articles: list[Article]) -> dict[int, float]:
         for e in ents:
             entity_counts[e] += 1
 
-    bonuses: dict[int, float] = {}
+    boosts: dict[int, float] = {}
     for a, ents in zip(articles, per_article):
-        bonus = 0.0
+        # The strongest single-entity cluster the article belongs to —
+        # we don't stack multipliers across entities (a story with
+        # three trending names shouldn't get ×4.5×).
+        peak = 0
         for e in ents:
             n = entity_counts[e]
-            if n >= 3:
-                bonus += 1.0  # genuine trending entity
-            elif n >= 2:
-                bonus += 0.4  # minor cross-source mention
-        if bonus:
-            bonuses[id(a)] = bonus
-    return bonuses
+            if n > peak:
+                peak = n
+        if peak >= 3:
+            boosts[id(a)] = 0.5
+        elif peak >= 2:
+            boosts[id(a)] = 0.2
+    return boosts
 
 
 def _dedupe_images(articles: list[Article],
@@ -338,7 +359,8 @@ def run_once(topic_slug: str, design_slug: str = "newsflash",
              *, mark_seen: bool = True,
              cross_topic_dedup: bool = False,
              override_articles: list[Article] | None = None,
-             deliver: str = "") -> dict:
+             deliver: str = "",
+             style: str | None = None) -> dict:
     """Generate one carousel for `topic_slug` rendered with `design_slug`.
 
     Returns: {status, run_id, topic, design, slide_paths, caption, articles, output_dir}.
@@ -346,9 +368,11 @@ def run_once(topic_slug: str, design_slug: str = "newsflash",
     `override_articles` lets the studio re-render an existing run with edited
     titles / replaced images without going back to the network.
     `deliver` is a delivery-adapter slug (e.g. "telegram") — empty disables.
+    `style` picks a topic-defined sub-tone (e.g. "drama") that adds its
+    own boost/blocklist/cta copy on top of the base topic config.
     """
     dedup.init_db()
-    topic = load_topic(topic_slug)
+    topic = load_topic(topic_slug, style=style)
     design = get_design(design_slug)
     run_id = f"{topic.slug}_{design.slug}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
     out_dir = OUTPUT_DIR / topic.slug / run_id
@@ -390,7 +414,23 @@ def run_once(topic_slug: str, design_slug: str = "newsflash",
         need = topic.carousel.news_per_carousel
         boost = topic.boost
         prelim = sorted(fresh, key=lambda a: -score_article(a, boost=boost))
-        candidates = prelim[: max(need * 5, need + 10)]
+        if topic.aggregate_from:
+            # For aggregated meta-topics, take the top-K per child topic
+            # instead of the global top-N — otherwise one sport's
+            # better-metadata RSS feeds eat the entire shortlist before
+            # the others get a look in. With ~8 children and per_child=10
+            # we end up enriching ~80 articles, which leaves the balance
+            # step with a comfortable per-sport pool.
+            per_child = max(8, need * 2)
+            by_origin: dict[str, list[Article]] = {}
+            for a in prelim:
+                origin = a.extra.get("origin_topic", "")
+                bucket = by_origin.setdefault(origin, [])
+                if len(bucket) < per_child:
+                    bucket.append(a)
+            candidates = [a for arts in by_origin.values() for a in arts]
+        else:
+            candidates = prelim[: max(need * 5, need + 10)]
 
         # Enrichment (og:image, image-search fallback) + verification
         # download. Articles whose image fails to download get their
@@ -419,9 +459,18 @@ def run_once(topic_slug: str, design_slug: str = "newsflash",
         trending = _trending_bonuses(enriched)
         ranked = sorted(
             enriched,
-            key=lambda a: -(score_article(a, boost=boost) + trending.get(id(a), 0.0)),
+            key=lambda a: -(score_article(a, boost=boost) * (1 + trending.get(id(a), 0.0))),
         )
-        selected = balance_sources(ranked, need)
+        # Meta-topics (Sports Digest) round-robin by sport instead of by
+        # publisher — a digest of "today's top sports stories" must not
+        # be 4× NBA and 1× soccer just because NBA's feeds were loud.
+        if topic.aggregate_from:
+            selected = balance_sources(
+                ranked, need,
+                key=lambda a: a.extra.get("origin_topic", a.source),
+            )
+        else:
+            selected = balance_sources(ranked, need)
         if len(selected) < need:
             log.warning(
                 "only %d usable articles (needed %d)",
@@ -447,6 +496,27 @@ def run_once(topic_slug: str, design_slug: str = "newsflash",
             for a in selected:
                 a.title = rewriter(a.title)
         _section("llm rewrite", t)
+
+    # Meta-topics adopt the brand colours of the sport that dominates
+    # this particular digest, so a Sports Digest skewed toward F1 today
+    # renders in F1 red, and one skewed toward NBA tomorrow renders in
+    # NBA orange. The CTA text stays on the meta-topic itself ("FOLLOW
+    # FOR DAILY SPORTS NEWS") so the call-to-action stays generic — we
+    # don't want "SUBSCRIBE FOR THE LATEST F1 NEWS DAILY" on a
+    # multi-sport digest.
+    if topic.aggregate_from and selected:
+        from collections import Counter
+        counts = Counter(
+            a.extra.get("origin_topic", "") for a in selected if a.extra.get("origin_topic")
+        )
+        if counts:
+            dominant, _ = counts.most_common(1)[0]
+            try:
+                child = load_topic(dominant)
+                topic.brand = child.brand
+                log.info("dynamic brand from dominant child '%s'", dominant)
+            except FileNotFoundError:
+                log.warning("dominant child '%s' not loadable — keeping meta brand", dominant)
 
     t = time.monotonic()
     slide_paths = design.render(topic, selected, out_dir)
@@ -526,7 +596,7 @@ def select_fresh_candidates(
     trending = _trending_bonuses(enriched)
     ranked = sorted(
         enriched,
-        key=lambda a: -(score_article(a, boost=boost) + trending.get(id(a), 0.0)),
+        key=lambda a: -(score_article(a, boost=boost) * (1 + trending.get(id(a), 0.0))),
     )
     return balance_sources(ranked, count)
 

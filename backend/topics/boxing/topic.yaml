@@ -1,0 +1,51 @@
+slug: boxing
+display_name: "Boxing Daily"
+language: en
+
+sources:
+  - kind: rss
+    name: Sky Sports Boxing
+    feed: https://www.skysports.com/rss/12183
+  - kind: rss
+    name: Boxing News 24
+    feed: https://www.boxingnews24.com/feed/
+  - kind: rss
+    name: Yahoo Sports Boxing
+    feed: https://sports.yahoo.com/boxing/rss/
+  - kind: rss
+    name: Boxing News Online
+    feed: https://www.boxingnewsonline.net/feed/
+  - kind: rss
+    name: Bad Left Hook
+    feed: https://www.badlefthook.com/rss/current.xml
+
+# Boxing media has a lot of betting/preview content; the teaser regex
+# in quality.py catches most. Topic-level blocklist drops amateur-fight
+# bleed and the heavy SEO listicles.
+blocklist:
+  - "amateur boxing"
+  - "white collar"
+  - "youtuber boxing"
+  - "kickboxing"
+  - "exhibition match"
+
+brand:
+  colors:
+    bg: "#1A0606"            # near-black with red tint
+    accent: "#C8102E"         # boxing-glove red
+    accent_light: "#FF6B6B"
+    text: "#FFFFFF"
+
+cta:
+  headline: "FOLLOW\nFOR DAILY\nBOXING NEWS"
+  subtext: "EVERYTHING BOXING, EVERY DAY"
+
+caption:
+  intro: "🥊 BOXING UPDATE 🥊"
+  hashtags: [boxing, boxingnews, fightnight, prizefighting, boxingdaily]
+  style: bullet
+  llm_rewrite: false
+
+carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
+schedule: {timezone: America/New_York, send_hours: [9, 14, 20]}
+delivery: {telegram_chat: env:CHAT_BOXING}

@@ -91,3 +91,54 @@ schedule:
 
 delivery:
   telegram_chat: env:CHAT_F1
+
+# Styles — F1 News tone vs. broader Motorsport / culture coverage.
+# The master sheet has 4 F1 News accounts + 4 BCS Drift / culture
+# accounts; the Drift content overlaps with the same source pool but
+# different keyword focus.
+styles:
+  news:
+    display_name: "F1 News"
+    cta:
+      headline: "FOLLOW\nFOR DAILY\nF1 NEWS"
+      subtext: "RACES · DRIVERS · PADDOCK"
+    caption:
+      intro: "🏎 F1 NEWS 🏎"
+    boost:
+      - pole
+      - qualifying
+      - fastest lap
+      - drs
+      - undercut
+      - safety car
+      - vsc
+      - radio message
+      - stewards
+      - penalty
+      - investigation
+      - contract
+      - extension
+      - signed
+
+  drift_culture:
+    display_name: "Motorsport Culture"
+    cta:
+      headline: "FOLLOW\nFOR THE\nDRIFT LIFE"
+      subtext: "CAR CULTURE · TECH · MOTORSPORT LIFESTYLE"
+    caption:
+      intro: "🏎 MOTORSPORT CULTURE 🏎"
+    boost:
+      - drift
+      - drifting
+      - tuned
+      - tuner
+      - liveried
+      - livery reveal
+      - garage
+      - tech reveal
+      - 1000-hp
+      - horsepower
+      - downforce
+      - tyre
+      - hypercar
+      - prototype
