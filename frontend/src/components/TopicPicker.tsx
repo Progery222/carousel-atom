@@ -43,6 +43,32 @@ interface Props {
   topics: Topic[];
   selected: string | null;
   onSelect: (slug: string) => void;
+  /** Currently picked sub-style for the selected topic, or null = base config. */
+  selectedStyle?: string | null;
+  /** Setter for the sub-style — pass null to clear. */
+  onSelectStyle?: (style: string | null) => void;
+}
+
+const STYLE_EMOJI: Record<string, string> = {
+  news: "📰",
+  drama: "🔥",
+  history: "📜",
+  stats: "📊",
+  analytics: "🧠",
+  fan: "📣",
+  analysis: "🥋",
+  scandals: "🍵",
+  drift_culture: "🚗",
+  transfers: "💸",
+  daily_news: "📰",
+};
+
+function prettyStyle(slug: string): string {
+  // "daily_news" → "Daily News", "drift_culture" → "Drift Culture"
+  return slug
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
 }
 
 const COLLAPSE_KEY = "carousel-studio:topics-collapsed:v1";
@@ -56,7 +82,13 @@ function loadCollapsed(): boolean {
   return true; // default
 }
 
-export function TopicPicker({ topics, selected, onSelect }: Props) {
+export function TopicPicker({
+  topics,
+  selected,
+  onSelect,
+  selectedStyle = null,
+  onSelectStyle,
+}: Props) {
   const featured = topics.filter((t) => t.featured);
   const regular = topics.filter((t) => !t.featured);
 
@@ -77,37 +109,67 @@ export function TopicPicker({ topics, selected, onSelect }: Props) {
 
   const renderItem = (t: Topic, big = false) => {
     const active = selected === t.slug;
+    const styles = t.styles ?? [];
     return (
-      <button
-        key={t.slug}
-        onClick={() => onSelect(t.slug)}
-        className={`w-full text-left rounded-xl transition ${
-          big ? "px-3 py-3" : "px-3 py-2.5"
-        } ${
-          active
-            ? "bg-accent/10 ring-1 ring-accent/40 shadow-soft"
-            : big
-              ? "bg-gradient-to-br from-accent/15 to-ink-700/60 hover:from-accent/20 hover:shadow-soft ring-1 ring-accent/20"
-              : "bg-ink-700/60 hover:bg-ink-700 hover:shadow-soft"
-        }`}
-      >
-        <div className="flex items-center gap-2.5">
-          <span className={`flex items-center justify-center leading-none shrink-0 ${big ? "w-7 h-7 text-2xl" : "w-6 h-6 text-xl"}`}>
-            {EMOJI[t.slug] ?? "📰"}
-          </span>
-          <div className="flex-1 min-w-0">
-            <div className={`font-medium truncate ${big ? "text-[15px]" : "text-sm"} ${active ? "text-accent" : "text-ink-100"}`}>
-              {t.name}
+      <div key={t.slug} className="space-y-1.5">
+        <button
+          onClick={() => {
+            onSelect(t.slug);
+            // Clearing the sub-style when the topic changes prevents
+            // stale state — the new topic may have a totally different
+            // set (or none).
+            if (!active && onSelectStyle) onSelectStyle(null);
+          }}
+          className={`w-full text-left rounded-xl transition ${
+            big ? "px-3 py-3" : "px-3 py-2.5"
+          } ${
+            active
+              ? "bg-accent/10 ring-1 ring-accent/40 shadow-soft"
+              : big
+                ? "bg-gradient-to-br from-accent/15 to-ink-700/60 hover:from-accent/20 hover:shadow-soft ring-1 ring-accent/20"
+                : "bg-ink-700/60 hover:bg-ink-700 hover:shadow-soft"
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            <span className={`flex items-center justify-center leading-none shrink-0 ${big ? "w-7 h-7 text-2xl" : "w-6 h-6 text-xl"}`}>
+              {EMOJI[t.slug] ?? "📰"}
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className={`font-medium truncate ${big ? "text-[15px]" : "text-sm"} ${active ? "text-accent" : "text-ink-100"}`}>
+                {t.name}
+              </div>
+              <div className="text-[11px] text-ink-300 mt-0.5">
+                {t.source_count} sources · {t.news_per_carousel} news
+              </div>
             </div>
-            <div className="text-[11px] text-ink-300 mt-0.5">
-              {t.source_count} sources · {t.news_per_carousel} news
-            </div>
+            {active && (
+              <span className="w-1.5 h-1.5 rounded-full bg-accent shadow-soft" />
+            )}
           </div>
-          {active && (
-            <span className="w-1.5 h-1.5 rounded-full bg-accent shadow-soft" />
-          )}
-        </div>
-      </button>
+        </button>
+        {active && styles.length > 0 && onSelectStyle && (
+          <div className="flex flex-wrap gap-1.5 pl-2">
+            {styles.map((s) => {
+              const styleActive = selectedStyle === s;
+              return (
+                <button
+                  key={s}
+                  onClick={() => onSelectStyle(styleActive ? null : s)}
+                  className={`text-[11px] px-2.5 py-1 rounded-full transition ${
+                    styleActive
+                      ? "bg-accent text-white ring-1 ring-accent shadow-soft"
+                      : "bg-ink-700/40 text-ink-200 hover:bg-ink-700 hover:text-ink-100 ring-1 ring-ink-600/60"
+                  }`}
+                  title={`Render this topic in the "${prettyStyle(s)}" style`}
+                >
+                  <span className="mr-1">{STYLE_EMOJI[s] ?? "✨"}</span>
+                  {prettyStyle(s)}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
     );
   };
 

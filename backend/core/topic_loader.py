@@ -111,6 +111,11 @@ class TopicConfig:
     # the regular topic list (e.g. pinned "🔥 Sports Digest"). Has no
     # effect on the pipeline.
     featured: bool = False
+    # List of style slugs defined in the topic's `styles:` block. Used
+    # by the studio UI to render selectable sub-tones under the topic
+    # (e.g. NBA → news / drama / history). Pipeline ignores this; the
+    # actual style application happens inside `load_topic(slug, style=)`.
+    styles_available: list[str] = field(default_factory=list)
 
 
 def _hex(s: str) -> tuple[int, int, int]:
@@ -233,6 +238,7 @@ def load_topic(slug: str, style: str | None = None) -> TopicConfig:
         boost=list(raw.get("boost") or []) + merged_boost + list(style_overrides.get("boost") or []),
         aggregate_from=aggregate_from,
         featured=bool(raw.get("featured", False)),
+        styles_available=sorted((raw.get("styles") or {}).keys()),
     )
 
 

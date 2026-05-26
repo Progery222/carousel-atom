@@ -14,6 +14,9 @@ class TopicOut(BaseModel):
     source_count: int
     news_per_carousel: int
     featured: bool = False
+    # Style slugs the user can pass to /render for this topic. Empty
+    # list = no styles defined; the topic uses its base config only.
+    styles: list[str] = []
 
 
 class DesignOut(BaseModel):

@@ -48,3 +48,48 @@ caption:
 carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
 schedule: {timezone: Europe/London, send_hours: [9, 14, 20]}
 delivery: {telegram_chat: env:CHAT_PREMIER_LEAGUE}
+
+# Styles — Same transfers / daily-news split as Soccer, scoped to
+# Premier League only.
+styles:
+  transfers:
+    display_name: "Premier League Transfers"
+    cta:
+      headline: "FOLLOW\nFOR PL\nTRANSFER NEWS"
+      subtext: "FEES · WAGES · DONE DEALS IN THE PL"
+    caption:
+      intro: "⚽ PL TRANSFERS ⚽"
+    boost:
+      - signed
+      - signs
+      - signing
+      - transfer
+      - done deal
+      - here we go
+      - agreed
+      - clause
+      - extension
+      - loan
+      - released
+      - free agent
+
+  daily_news:
+    display_name: "Premier League Daily"
+    cta:
+      headline: "FOLLOW\nFOR DAILY\nPL NEWS"
+      subtext: "MATCH RESULTS · TABLES · STORYLINES"
+    caption:
+      intro: "⚽ PL DAILY ⚽"
+    boost:
+      - winner
+      - victory
+      - thriller
+      - hat-trick
+      - red card
+      - var
+      - controversy
+      - tactical
+      - relegation
+      - title race
+      - top four
+      - comeback

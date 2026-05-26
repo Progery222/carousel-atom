@@ -64,3 +64,72 @@ schedule:
 
 delivery:
   telegram_chat: env:CHAT_NFL
+
+# Styles — three per-tone NFL accounts mapping to the master sheet
+# (NFL Analyst, NFL Fan Host, NFL Stats Guy).
+styles:
+  analytics:
+    display_name: "NFL Analytics"
+    cta:
+      headline: "FOLLOW\nFOR NFL\nFILM ROOM"
+      subtext: "SCHEMES · COVERAGES · PLAY DESIGN"
+    caption:
+      intro: "🏈 NFL ANALYTICS 🏈"
+    boost:
+      - scheme
+      - coverage
+      - play design
+      - epa
+      - dvoa
+      - third-down
+      - red zone
+      - fourth-down
+      - blitz
+      - zone defense
+      - man coverage
+      - rpo
+      - tempo
+      - drive
+
+  stats:
+    display_name: "NFL Stats"
+    cta:
+      headline: "FOLLOW\nFOR NFL\nNUMBERS"
+      subtext: "STATS THAT CHANGE HOW YOU SEE THE GAME"
+    caption:
+      intro: "🏈 NFL STATS 🏈"
+    boost:
+      - record
+      - all-time
+      - milestone
+      - first ever
+      - oldest
+      - youngest
+      - streak
+      - history
+      - franchise record
+      - league leader
+      - hall of fame
+      - mvp
+
+  fan:
+    display_name: "NFL Fan Zone"
+    cta:
+      headline: "FOLLOW\nFOR THE\nLOUDEST FAN"
+      subtext: "REACTIONS · HOT TAKES · GAMEDAY ENERGY"
+    caption:
+      intro: "🏈 NFL FAN ZONE 🏈"
+    boost:
+      - upset
+      - shocker
+      - comeback
+      - viral
+      - goes viral
+      - on fire
+      - cooked
+      - lets go
+      - meltdown
+      - dramatic
+      - thriller
+      - controversy
+      - blown call

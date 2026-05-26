@@ -35,3 +35,54 @@ caption:
 carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
 schedule: {timezone: America/New_York, send_hours: [10, 15, 21]}
 delivery: {telegram_chat: env:CHAT_UFC}
+
+# Styles — two per-tone MMA accounts from the master sheet
+# (MMA Analyst, MMA Drama Host).
+styles:
+  analysis:
+    display_name: "MMA Analysis"
+    cta:
+      headline: "FOLLOW\nFOR FIGHT\nBREAKDOWNS"
+      subtext: "STRIKING · GRAPPLING · CAGE CONTROL"
+    caption:
+      intro: "🥊 MMA ANALYSIS 🥊"
+    boost:
+      - matchup
+      - striking
+      - grappling
+      - takedown
+      - submission
+      - knockout
+      - tko
+      - rankings
+      - title shot
+      - title fight
+      - main event
+      - co-main
+      - debut
+      - stylistic
+
+  scandals:
+    display_name: "MMA Drama"
+    cta:
+      headline: "FOLLOW\nFOR THE\nMMA TEA"
+      subtext: "PRE-FIGHT BEEF · CAMP CHAOS · TRASH TALK"
+    caption:
+      intro: "🥊 MMA DRAMA 🥊"
+    boost:
+      - feud
+      - beef
+      - trash talk
+      - callout
+      - called out
+      - clash
+      - blasts
+      - slams
+      - rant
+      - shots fired
+      - war of words
+      - weight miss
+      - banned
+      - suspended
+      - pulled out
+      - withdrawn
