@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { Topic } from "../types";
 
 const EMOJI: Record<string, string> = {
@@ -22,6 +23,20 @@ const EMOJI: Record<string, string> = {
   fashion: "👗",
   celebrity: "⭐",
   music: "🎵",
+  tennis: "🎾",
+  golf: "⛳",
+  boxing: "🥊",
+  cricket: "🏏",
+  rugby: "🏉",
+  nascar: "🏁",
+  ncaa_football: "🏈",
+  ncaa_basketball: "🏀",
+  wwe: "🤼",
+  esports: "🎮",
+  wnba: "🏀",
+  motogp: "🏍",
+  olympics: "🥇",
+  premier_league: "⚽",
 };
 
 interface Props {
@@ -30,9 +45,35 @@ interface Props {
   onSelect: (slug: string) => void;
 }
 
+const COLLAPSE_KEY = "carousel-studio:topics-collapsed:v1";
+
+function loadCollapsed(): boolean {
+  // Start collapsed by default so the sidebar opens compact — the
+  // featured Sports Digest is the primary thing the user touches.
+  const v = localStorage.getItem(COLLAPSE_KEY);
+  if (v === "expanded") return false;
+  if (v === "collapsed") return true;
+  return true; // default
+}
+
 export function TopicPicker({ topics, selected, onSelect }: Props) {
   const featured = topics.filter((t) => t.featured);
   const regular = topics.filter((t) => !t.featured);
+
+  const [collapsed, setCollapsed] = useState<boolean>(loadCollapsed);
+
+  // If the user picks a non-featured topic via Cmd-K or history while
+  // the list is collapsed, auto-expand so they can see the active row.
+  useEffect(() => {
+    if (collapsed && selected && regular.some((t) => t.slug === selected)) {
+      setCollapsed(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+
+  useEffect(() => {
+    localStorage.setItem(COLLAPSE_KEY, collapsed ? "collapsed" : "expanded");
+  }, [collapsed]);
 
   const renderItem = (t: Topic, big = false) => {
     const active = selected === t.slug;
@@ -82,12 +123,35 @@ export function TopicPicker({ topics, selected, onSelect }: Props) {
           </div>
         </div>
       )}
-      <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-300 mb-3 px-1">
-        Topic
-      </h3>
-      <div className="space-y-1.5">
-        {regular.map((t) => renderItem(t))}
-      </div>
+
+      {regular.length > 0 && (
+        <>
+          <button
+            onClick={() => setCollapsed((c) => !c)}
+            className="w-full flex items-center justify-between mb-3 px-1 text-left group"
+          >
+            <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-300 group-hover:text-ink-100 transition">
+              Topics
+              <span className="ml-1.5 text-ink-400 normal-case tracking-normal font-normal">
+                · {regular.length}
+              </span>
+            </h3>
+            <span
+              className={`text-ink-400 group-hover:text-ink-100 transition-transform text-[10px] ${
+                collapsed ? "rotate-0" : "rotate-90"
+              }`}
+              aria-label={collapsed ? "expand" : "collapse"}
+            >
+              ▶
+            </span>
+          </button>
+          {!collapsed && (
+            <div className="space-y-1.5">
+              {regular.map((t) => renderItem(t))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
