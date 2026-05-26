@@ -34,7 +34,7 @@ from core.log import get_logger
 from core.parsers.base import Article
 from core.text import clean_description, clean_headline, punchy
 from core.topic_loader import TopicConfig
-from core.typography import fit_font
+from core.typography import balanced_wrap, fit_font
 
 from designs.base import Design
 
@@ -118,54 +118,106 @@ def _build_panorama(photo_path: str | None, target_w: int, target_h: int) -> Ima
 # ── CTA backdrop (last slide) ─────────────────────────────────────────────
 
 
-def _build_cta_backdrop(topic: TopicConfig, W: int, H: int) -> Image.Image:
-    """Final slide gets a clean brand-coloured backdrop with a soft
-    vertical gradient (top → accent, bottom → darker). No photo, so
-    the CTA text and topic identity dominate visually."""
-    bg = topic.brand.bg or (10, 10, 10)
-    accent = topic.brand.accent or (220, 60, 80)
-
+def _build_cta_backdrop(topic: TopicConfig, photos: list[str | None],
+                        W: int, H: int) -> Image.Image:
+    """CTA backdrop = a tilted stack of the carousel's hero photos
+    rendered as little polaroid-style cards on a dark page. Acts as a
+    visual recap of what the viewer just swiped through and lets the
+    CTA text below land on a textured (but darkened) surface instead
+    of a featureless brand-coloured rectangle.
+    """
+    bg = topic.brand.bg or (12, 12, 16)
     canvas = Image.new("RGB", (W, H), bg)
-    # Vertical gradient: top 40% blended toward accent, bottom stays bg.
+
+    # Subtle vertical gradient — slightly lighter at top, fades down.
+    # Gives the backdrop depth without competing with the photos.
+    accent = topic.brand.accent or (220, 60, 80)
     grad = Image.new("RGB", (1, H), bg)
     for y in range(H):
-        t = 1.0 - (y / max(1, H - 1))  # 1 at top, 0 at bottom
-        # Quintic ease — accent fades in only at top quarter
-        blend = (t ** 3) * 0.35
+        t = 1.0 - (y / max(1, H - 1))
+        blend = (t ** 2.5) * 0.18
         r = int(bg[0] * (1 - blend) + accent[0] * blend)
         g = int(bg[1] * (1 - blend) + accent[1] * blend)
         b = int(bg[2] * (1 - blend) + accent[2] * blend)
         grad.putpixel((0, y), (r, g, b))
     canvas = grad.resize((W, H))
 
-    # Large soft circle in upper-third for an emblem-like focal anchor.
-    d = ImageDraw.Draw(canvas, "RGBA")
-    diameter = int(min(W, H) * 0.32)
-    cx, cy = W // 2, int(H * 0.32)
-    d.ellipse(
-        [cx - diameter // 2, cy - diameter // 2,
-         cx + diameter // 2, cy + diameter // 2],
-        fill=accent + (255,),
-    )
-    # White hairline ring around it
-    d.ellipse(
-        [cx - diameter // 2 + 6, cy - diameter // 2 + 6,
-         cx + diameter // 2 - 6, cy + diameter // 2 - 6],
-        outline=(255, 255, 255, 200), width=3,
-    )
-    # Topic initials inside the disc
-    label = (topic.display_name or topic.slug or "").strip().upper()
-    label = label[:2] if len(label) <= 4 else label[:1]
-    headline_path = topic.brand.font_headline or FALLBACK_HEADLINE
-    f = _font(headline_path, int(diameter * 0.55), FALLBACK_HEADLINE)
-    bb = f.getbbox(label)
-    tw = bb[2] - bb[0]
-    th = bb[3] - bb[1]
-    d.text(
-        (cx - tw // 2 - bb[0], cy - th // 2 - bb[1] - 8),
-        label, font=f, fill=WHITE,
-    )
-    return canvas
+    # Build mini polaroid cards from up to 3 article photos.
+    card_w, card_h = 320, 380
+    photo_w, photo_h = 284, 284
+    photo_x = (card_w - photo_w) // 2
+    photo_y = 18
+    cards: list[Image.Image] = []
+    for photo_path in (photos or []):
+        if not photo_path or not os.path.exists(photo_path):
+            continue
+        card = Image.new("RGBA", (card_w, card_h), (0, 0, 0, 0))
+        cd = ImageDraw.Draw(card)
+        cd.rounded_rectangle([0, 0, card_w, card_h], radius=4,
+                             fill=(246, 244, 238, 255))
+        try:
+            img = Image.open(photo_path).convert("RGB")
+            img = smart_cover(img, photo_w, photo_h, prefer_top=True)
+            card.paste(img, (photo_x, photo_y))
+        except Exception as e:
+            log.warning("cta card photo failed (%s): %s", photo_path, e)
+            cd.rectangle(
+                [photo_x, photo_y, photo_x + photo_w, photo_y + photo_h],
+                fill=(190, 188, 180, 255),
+            )
+        cards.append(card)
+        if len(cards) >= 3:
+            break
+
+    if not cards:
+        return canvas  # fallback: clean gradient, no photo stack
+
+    # Tilt + offset each card. Stack falls roughly along a curved line
+    # from upper-left to lower-right so the bottom-left card lies in
+    # the safe zone for the brand chip / CTA text.
+    placements = [
+        (W // 2 - 320, 60,  -7),   # back card, leans left
+        (W // 2 - 100, 110,  5),   # middle card, leans right
+        (W // 2 + 60,  80,  -3),   # front card, leans left a bit
+    ][:len(cards)]
+
+    canvas_rgba = canvas.convert("RGBA")
+    for card, (x, y, angle) in zip(cards, placements):
+        # Drop shadow first so it sits under the rotated card.
+        rotated = card.rotate(angle, resample=Image.BICUBIC, expand=True)
+        shadowed = _card_shadow(rotated)
+        sx, sy = x - 24, y - 24  # account for shadow padding
+        canvas_rgba.alpha_composite(shadowed, (sx, sy))
+    canvas = canvas_rgba.convert("RGB")
+
+    # Dim the lower half so the CTA text reads cleanly on top of any
+    # stray photo bits that intrude into the text zone.
+    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    fade_start = int(H * 0.48)
+    for y in range(fade_start, H):
+        t = (y - fade_start) / max(1, H - fade_start - 1)
+        a = int((t ** 1.6) * 220)
+        od.line([(0, y), (W, y)], fill=(*bg, a))
+    canvas_rgba = canvas.convert("RGBA")
+    canvas_rgba.alpha_composite(overlay)
+    return canvas_rgba.convert("RGB")
+
+
+def _card_shadow(card: Image.Image) -> Image.Image:
+    """Soft drop shadow under a (rotated) polaroid card. Returns an
+    RGBA image larger than `card` so the shadow fits."""
+    pad = 24
+    sw, sh = card.width + pad * 2, card.height + pad * 2
+    shadow = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+    alpha = card.split()[-1]
+    mask = Image.new("L", (sw, sh), 0)
+    mask.paste(alpha, (pad, pad + 8))
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=12))
+    fill = Image.new("RGBA", (sw, sh), (0, 0, 0, 140))
+    shadow.paste(fill, (0, 0), mask)
+    shadow.alpha_composite(card, (pad, pad))
+    return shadow
 
 
 # ── content planning ──────────────────────────────────────────────────────
@@ -431,46 +483,78 @@ def _draw_reveal_slide(img: Image.Image, slot: dict, topic: TopicConfig,
 
 def _draw_cta_slide(img: Image.Image, slot: dict, topic: TopicConfig,
                     slide_num: int, total: int) -> None:
-    """Final slide — brand backdrop, large 'FOLLOW' CTA."""
+    """Final slide — polaroid stack of the carousel's photos sits in the
+    upper half (built by `_build_cta_backdrop`), text CTA fills the
+    bottom. The headline is the topic's own CTA copy (multi-line) so
+    it reflects the topic identity, with the punch word picking up
+    the accent colour. Sub-text adds context, the topic handle (or a
+    fallback) acts as the destination."""
     W, H = img.size
     accent_light = topic.brand.accent_light or (255, 130, 130)
     headline_path = topic.brand.font_headline or FALLBACK_HEADLINE
     body_path = topic.brand.font_body or FALLBACK_BODY
 
-    # Soft scrim — the CTA backdrop is already dark, this is mostly to
-    # keep the layout language consistent with the other slides.
-    scrim_top = int(H * 0.42)
-    scrim_h = H - scrim_top
-    overlay = Image.new("RGBA", (W, scrim_h), (0, 0, 0, 0))
-    od = ImageDraw.Draw(overlay)
-    for y in range(scrim_h):
-        t = y / max(1, scrim_h - 1)
-        a = int((t ** 1.8) * 180)
-        od.line([(0, y), (W, y)], fill=(0, 0, 0, a))
-    base = img.convert("RGBA")
-    base.alpha_composite(overlay, (0, scrim_top))
-    img.paste(base.convert("RGB"))
-
     d = ImageDraw.Draw(img)
     margin = 80
     safe_w = W - margin * 2
     footer_y = H - margin - 28
-    text_bottom = footer_y - 50
 
-    font, lines = fit_font(
-        headline_path, slot["text"], max_w=safe_w,
-        max_size=200, min_size=110, max_lines=1,
-    )
-    line_h = font.getbbox("Hg")[3] + 10
-    block_h = line_h * len(lines)
-    text_y = text_bottom - block_h
-    for ln in lines:
-        d.text((margin, text_y), ln, font=font, fill=accent_light)
+    # Multi-line CTA headline. Honour any \n the topic.yaml ships, but
+    # also wrap if a single line wouldn't fit.
+    raw = slot.get("text") or "FOLLOW FOR MORE"
+    pre_lines = [ln.strip() for ln in raw.split("\n") if ln.strip()]
+    headline_lines: list[str] = []
+    cta_font = _font(headline_path, 96, FALLBACK_HEADLINE)
+    for ln in pre_lines:
+        wrapped = balanced_wrap(ln, cta_font, safe_w, max_lines=2)
+        headline_lines.extend(wrapped)
+    if len(headline_lines) > 3:
+        # Headline is huge — try a smaller font and re-wrap as one block
+        cta_font = _font(headline_path, 78, FALLBACK_HEADLINE)
+        headline_lines = balanced_wrap(" ".join(pre_lines), cta_font,
+                                       safe_w, max_lines=3)
+
+    line_h = cta_font.getbbox("Hg")[3] + 10
+    block_h = line_h * len(headline_lines)
+
+    # Subtitle text below the headline.
+    sub_text = slot.get("subtext") or ""
+    sub_font = _font(body_path, 30, FALLBACK_BODY)
+    sub_lines: list[str] = []
+    if sub_text:
+        sub_lines = balanced_wrap(sub_text, sub_font, safe_w, max_lines=2)
+    sub_line_h = int(sub_font.size * 1.32)
+    sub_block_h = sub_line_h * len(sub_lines)
+
+    # Position the bundle: anchored to the bottom-third of the slide,
+    # above the footer pills, so the photo stack above stays uncrowded.
+    bundle_gap = 20 if sub_lines else 0
+    bundle_h = block_h + bundle_gap + sub_block_h
+    text_bottom = footer_y - 60
+    text_y = text_bottom - bundle_h
+
+    # Headline: last word picks up the accent so the CTA has a punch.
+    for i, ln in enumerate(headline_lines):
+        if i == len(headline_lines) - 1 and " " in ln:
+            rest, last = ln.rsplit(" ", 1)
+            rest_w = (cta_font.getbbox(rest + " ")[2]
+                      - cta_font.getbbox(rest + " ")[0])
+            d.text((margin, text_y), rest + " ", font=cta_font, fill=WHITE)
+            d.text((margin + rest_w, text_y), last,
+                   font=cta_font, fill=accent_light)
+        else:
+            d.text((margin, text_y), ln, font=cta_font, fill=WHITE)
         text_y += line_h
+
+    if sub_lines:
+        sub_y = text_bottom - sub_block_h
+        for ln in sub_lines:
+            d.text((margin, sub_y), ln, font=sub_font, fill=SOFT_WHITE)
+            sub_y += sub_line_h
 
     _draw_eyebrow_footer(img, d, slot, topic, slide_num, total,
                          body_path, accent_light,
-                         block_top=text_bottom - block_h,
+                         block_top=text_bottom - bundle_h,
                          footer_y=footer_y, margin=margin)
 
 
@@ -595,12 +679,17 @@ def render(topic: TopicConfig, articles: list[Article],
             paths.append(str(out))
             log.info("  slide %d/%d · %s", slide_num, n_total, slots[sub]["kind"])
 
-    # Final CTA slide — brand backdrop, no photo
-    cta_tile = _build_cta_backdrop(topic, W, H)
+    # Final CTA slide — polaroid-stack backdrop built from the same hero
+    # photos the viewer just swiped through, so it doubles as a recap.
+    # Text honours the topic's own cta.headline / subtext.
+    cta_tile = _build_cta_backdrop(topic, list(local_imgs), W, H)
+    cta_headline = (topic.cta.headline or "FOLLOW FOR MORE").upper()
+    cta_subtext = (topic.cta.subtext or "").strip()
     cta_slot = {
         "kind": "cta",
-        "text": "FOLLOW",
-        "eyebrow": f"FOR DAILY {(topic.display_name or topic.slug).upper()}",
+        "text": cta_headline,
+        "subtext": cta_subtext,
+        "eyebrow": "END · " + (topic.display_name or topic.slug).upper(),
     }
     _draw_slide(cta_tile, cta_slot, topic, n_total, n_total)
     out = output_dir / f"slide_{n_total}.png"
