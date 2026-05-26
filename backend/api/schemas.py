@@ -31,6 +31,7 @@ class DeliveryOut(BaseModel):
 class RenderRequest(BaseModel):
     topic: str
     design: str
+    style: Optional[str] = None  # topic-defined sub-tone (e.g. "drama", "stats")
     mark_seen: bool = True
     cross_topic_dedup: bool = False
     deliver: str = ""  # adapter slug, e.g. "telegram"; empty = no delivery

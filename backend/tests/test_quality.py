@@ -157,6 +157,40 @@ def test_three_word_news_still_passes():
     assert ok
 
 
+def test_schedule_odds_container_dropped():
+    ok, reason = is_news_content(
+        make("2026 NBA Finals schedule, odds: Knicks await Thunder or Spurs")
+    )
+    assert not ok
+    assert "teaser" in reason
+
+
+def test_kit_picker_marketing_dropped():
+    ok, reason = is_news_content(
+        make("Pick your perfect World Cup 2026 look with FourFourTwo's kit picker")
+    )
+    assert not ok
+    assert "teaser" in reason
+
+
+def test_squad_list_listicle_dropped():
+    ok, reason = is_news_content(
+        make("World Cup 2026 squads revealed: Every team and roster confirmed")
+    )
+    assert not ok
+    # Either "every team" or "2026 squads" catches it — both are teaser.
+    assert "teaser" in reason
+
+
+def test_real_game_recap_still_passes_with_odds_word():
+    # Headlines that mention "odds" but aren't a betting preview should
+    # still pass — e.g. "Underdog beats odds, …" is a real story.
+    ok, _ = is_news_content(
+        make("Verstappen beats the odds, wins from 12th on the grid at Canadian GP")
+    )
+    assert ok
+
+
 def test_video_url_dropped():
     art = make("Highlights from the latest game")
     art.url = "https://espn.com/video/highlights"

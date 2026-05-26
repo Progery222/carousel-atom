@@ -74,3 +74,86 @@ caption:
 carousel: {slides_per_carousel: 6, news_per_carousel: 5, width: 1080, height: 1350}
 schedule: {timezone: America/New_York, send_hours: [9, 14, 20]}
 delivery: {telegram_chat: env:CHAT_NBA}
+
+# ────────────────────────────────────────────────────────────────────────
+# Styles — per-tone sub-accounts that share the same source pool and
+# brand but differ in editorial angle. Each style overrides specific
+# fields on top of the base config above (see core/topic_loader.py).
+#
+# Mapping to the master spreadsheet:
+#   news     →  nba_news_*    (NBA Reporter)
+#   drama    →  nba_drama_*   (NBA Drama Host)
+#   history  →  nba_history_* (NBA Historian)
+#
+# Pass via POST /render { topic: "nba", design: "seamless", style: "drama" }
+# ────────────────────────────────────────────────────────────────────────
+styles:
+  news:
+    display_name: "NBA Daily News"
+    # Default tone — just rebadge the CTA + caption intro.
+    cta:
+      headline: "FOLLOW\nFOR DAILY\nNBA NEWS"
+      subtext: "EVERYTHING NBA, EVERY DAY"
+    caption:
+      intro: "🏀 NBA NEWS 🏀"
+    boost:
+      - signed
+      - trade
+      - traded
+      - fired
+      - hired
+      - extension
+      - debut
+
+  drama:
+    display_name: "NBA Drama"
+    cta:
+      headline: "FOLLOW\nFOR THE\nNBA TEA"
+      subtext: "LOCKER ROOM CHAOS · TRADE DEMANDS · BEEF"
+    caption:
+      intro: "🏀 NBA DRAMA 🏀"
+    boost:
+      - feud
+      - beef
+      - clash
+      - clashed
+      - blast
+      - blasts
+      - blasted
+      - slam
+      - slams
+      - slammed
+      - rant
+      - fired back
+      - war of words
+      - callout
+      - called out
+      - shots fired
+      - trade demand
+      - locker room
+      - apology
+    blocklist:
+      - "preseason"
+
+  history:
+    display_name: "NBA History"
+    cta:
+      headline: "FOLLOW\nFOR NBA\nLEGENDS"
+      subtext: "MOMENTS THAT SHAPED THE LEAGUE"
+    caption:
+      intro: "🏀 NBA HISTORY 🏀"
+    boost:
+      - legend
+      - greatest
+      - record
+      - all-time
+      - hall of fame
+      - throwback
+      - anniversary
+      - classic
+      - retired
+      - jersey retirement
+      - milestone
+      - first ever
+      - oldest
+      - youngest

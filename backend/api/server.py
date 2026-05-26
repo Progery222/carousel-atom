@@ -306,6 +306,7 @@ def render_impl(req: RenderRequest, *, base: str = "") -> RenderOut:
         mark_seen=req.mark_seen,
         cross_topic_dedup=req.cross_topic_dedup,
         deliver=req.deliver,
+        style=req.style,
     )
     if result["status"] != "ok":
         raise HTTPException(status_code=409, detail=result)

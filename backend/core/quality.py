@@ -151,7 +151,17 @@ _TEASER_RE = re.compile(
     r"according\s+to\s+(?:our|the|gq|esquire|men\'?s\s+health|women\'?s\s+health)\s+editors?|"
     # Tournament/season listicles — squad lists, fixture roundups, etc.
     r"every\s+(?:player|team|club|fight|match|game)\s+(?:at|in|on)\b|"
-    r"complete\s+(?:guide|list|schedule)\s+to"
+    r"complete\s+(?:guide|list|schedule)\s+to|"
+    # "Schedule, odds:" container titles — the article body holds the
+    # actual betting/matchup info, not the headline.
+    r"schedule[,:]\s*(?:odds|picks|preview|predictions?)|"
+    r"\bodds[,:]\s*(?:schedule|picks|preview|predictions?)|"
+    # Kit/jersey marketing tools rather than news events.
+    r"\bkit\s+picker|\bjersey\s+picker|\bpick\s+your\s+perfect|"
+    # Tournament roster listicles — "X 2026 squads", "Squad list for…"
+    r"\b\d{4}\s+squads?\b|\bsquad\s+(?:list|roster|reveal)|"
+    # Style/fashion picker promos (FourFourTwo, GQ).
+    r"\bpick\s+your\s+(?:perfect|favourite|favorite)"
     r")\b",
     re.IGNORECASE,
 )

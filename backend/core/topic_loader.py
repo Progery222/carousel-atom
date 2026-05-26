@@ -134,7 +134,19 @@ def _resolve_env(value: str | None) -> str | None:
     return value
 
 
-def load_topic(slug: str) -> TopicConfig:
+def load_topic(slug: str, style: str | None = None) -> TopicConfig:
+    """Load a topic. If `style` is supplied and the topic.yaml defines
+    a matching entry under `styles:`, the style's overrides are merged
+    into the base config — used to drive multiple per-tone accounts
+    off the same topic (e.g. NBA → News / Drama / History).
+
+    Style overrides:
+      - `display_name` replaces the base name
+      - `boost` extends the base boost list (additive)
+      - `blocklist` extends the base blocklist (additive)
+      - `cta.headline`, `cta.subtext` replace the base CTA copy
+      - `caption.intro` replaces the base caption intro
+    """
     base = TOPICS_DIR / slug
     cfg_path = base / "topic.yaml"
     if not cfg_path.exists():
@@ -142,6 +154,12 @@ def load_topic(slug: str) -> TopicConfig:
 
     with open(cfg_path, encoding="utf-8") as f:
         raw: dict[str, Any] = yaml.safe_load(f)
+
+    style_overrides: dict[str, Any] = {}
+    if style:
+        styles_block = raw.get("styles") or {}
+        if style in styles_block:
+            style_overrides = styles_block[style] or {}
 
     sources = [Source(**s) for s in raw.get("sources", [])]
 
@@ -181,9 +199,14 @@ def load_topic(slug: str) -> TopicConfig:
         font_body=_resolve(base, fonts.get("body", "")),
     )
 
-    cta = CTA(headline=raw["cta"]["headline"], subtext=raw["cta"].get("subtext", ""))
+    style_cta = (style_overrides.get("cta") or {}) if style_overrides else {}
+    style_caption = (style_overrides.get("caption") or {}) if style_overrides else {}
+    cta = CTA(
+        headline=style_cta.get("headline") or raw["cta"]["headline"],
+        subtext=style_cta.get("subtext") or raw["cta"].get("subtext", ""),
+    )
     cap = CaptionConfig(
-        intro=raw["caption"]["intro"],
+        intro=style_caption.get("intro") or raw["caption"]["intro"],
         hashtags=raw["caption"]["hashtags"],
         style=raw["caption"].get("style", "bullet"),
         llm_rewrite=raw["caption"].get("llm_rewrite", False),
@@ -194,7 +217,7 @@ def load_topic(slug: str) -> TopicConfig:
 
     return TopicConfig(
         slug=raw["slug"],
-        display_name=raw["display_name"],
+        display_name=style_overrides.get("display_name") or raw["display_name"],
         language=raw.get("language", "en"),
         sources=sources,
         brand=brand,
@@ -206,8 +229,8 @@ def load_topic(slug: str) -> TopicConfig:
         base_dir=base,
         hook_pool=_load_pool(raw.get("hook_pool"), "HookCopy"),
         cta_pool=_load_pool(raw.get("cta_pool"),   "CtaCopy"),
-        blocklist=list(raw.get("blocklist") or []),
-        boost=list(raw.get("boost") or []) + merged_boost,
+        blocklist=list(raw.get("blocklist") or []) + list(style_overrides.get("blocklist") or []),
+        boost=list(raw.get("boost") or []) + merged_boost + list(style_overrides.get("boost") or []),
         aggregate_from=aggregate_from,
         featured=bool(raw.get("featured", False)),
     )

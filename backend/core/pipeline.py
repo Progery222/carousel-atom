@@ -276,13 +276,22 @@ def _enrich_and_filter(articles: list[Article],
 
 
 def _trending_bonuses(articles: list[Article]) -> dict[int, float]:
-    """Cross-article entity overlap. If a name (Lewis Hamilton, Mudryk,
-    Manchester City) appears in more than one article in the candidate
-    pool, every article that mentions it gets a small score bump. The
-    pattern catches "this is what everyone is writing about today" and
-    pushes the truly hot stories to the top of the carousel.
+    """Cluster boost — a *multiplier* applied on top of the base score
+    for articles whose entities show up across multiple outlets in the
+    candidate pool.
 
-    Returns a mapping article-id → bonus (additive on top of base score).
+    Returns a mapping article-id → multiplier factor δ, where the
+    final ranked score is `base × (1 + δ)`:
+
+      δ = 0.5  → 3+ outlets cover the same entity (cluster, ×1.5)
+      δ = 0.2  → 2 outlets share the entity (mild cluster, ×1.2)
+      δ = 0.0  → unique story
+
+    The hype intuition: if 3+ independent feeds are writing about
+    Hamilton today, that story is what everyone's swiping for. The
+    multiplicative form spreads the cluster signal proportional to the
+    article's base quality — a high-quality story about a hot entity
+    leapfrogs both noisy hot stories and quiet quality stories.
     """
     from collections import Counter
     from core.text import extract_entities
@@ -295,18 +304,21 @@ def _trending_bonuses(articles: list[Article]) -> dict[int, float]:
         for e in ents:
             entity_counts[e] += 1
 
-    bonuses: dict[int, float] = {}
+    boosts: dict[int, float] = {}
     for a, ents in zip(articles, per_article):
-        bonus = 0.0
+        # The strongest single-entity cluster the article belongs to —
+        # we don't stack multipliers across entities (a story with
+        # three trending names shouldn't get ×4.5×).
+        peak = 0
         for e in ents:
             n = entity_counts[e]
-            if n >= 3:
-                bonus += 1.0  # genuine trending entity
-            elif n >= 2:
-                bonus += 0.4  # minor cross-source mention
-        if bonus:
-            bonuses[id(a)] = bonus
-    return bonuses
+            if n > peak:
+                peak = n
+        if peak >= 3:
+            boosts[id(a)] = 0.5
+        elif peak >= 2:
+            boosts[id(a)] = 0.2
+    return boosts
 
 
 def _dedupe_images(articles: list[Article],
@@ -347,7 +359,8 @@ def run_once(topic_slug: str, design_slug: str = "newsflash",
              *, mark_seen: bool = True,
              cross_topic_dedup: bool = False,
              override_articles: list[Article] | None = None,
-             deliver: str = "") -> dict:
+             deliver: str = "",
+             style: str | None = None) -> dict:
     """Generate one carousel for `topic_slug` rendered with `design_slug`.
 
     Returns: {status, run_id, topic, design, slide_paths, caption, articles, output_dir}.
@@ -355,9 +368,11 @@ def run_once(topic_slug: str, design_slug: str = "newsflash",
     `override_articles` lets the studio re-render an existing run with edited
     titles / replaced images without going back to the network.
     `deliver` is a delivery-adapter slug (e.g. "telegram") — empty disables.
+    `style` picks a topic-defined sub-tone (e.g. "drama") that adds its
+    own boost/blocklist/cta copy on top of the base topic config.
     """
     dedup.init_db()
-    topic = load_topic(topic_slug)
+    topic = load_topic(topic_slug, style=style)
     design = get_design(design_slug)
     run_id = f"{topic.slug}_{design.slug}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
     out_dir = OUTPUT_DIR / topic.slug / run_id
@@ -444,7 +459,7 @@ def run_once(topic_slug: str, design_slug: str = "newsflash",
         trending = _trending_bonuses(enriched)
         ranked = sorted(
             enriched,
-            key=lambda a: -(score_article(a, boost=boost) + trending.get(id(a), 0.0)),
+            key=lambda a: -(score_article(a, boost=boost) * (1 + trending.get(id(a), 0.0))),
         )
         # Meta-topics (Sports Digest) round-robin by sport instead of by
         # publisher — a digest of "today's top sports stories" must not
@@ -581,7 +596,7 @@ def select_fresh_candidates(
     trending = _trending_bonuses(enriched)
     ranked = sorted(
         enriched,
-        key=lambda a: -(score_article(a, boost=boost) + trending.get(id(a), 0.0)),
+        key=lambda a: -(score_article(a, boost=boost) * (1 + trending.get(id(a), 0.0))),
     )
     return balance_sources(ranked, count)
 

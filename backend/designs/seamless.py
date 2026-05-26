@@ -32,6 +32,7 @@ from core.http import download_images_parallel
 from core.image import smart_cover
 from core.log import get_logger
 from core.parsers.base import Article
+from core.quality import emoji_font_path
 from core.text import clean_description, clean_headline, punchy
 from core.topic_loader import TopicConfig
 from core.typography import balanced_wrap, fit_font
@@ -347,6 +348,56 @@ def _draw_blank_counter(img: Image.Image, slide_num: int, total: int,
            counter, font=counter_font, fill=SOFT_WHITE)
 
 
+def _emoji_glyph(char: str, target_h: int) -> Image.Image | None:
+    """Render a single emoji codepoint as an RGBA image of height ~target_h.
+
+    Apple Color Emoji and Noto Color Emoji are bitmap fonts (SBIX /
+    CBDT) with discrete strike sizes — PIL can only load them at one
+    of those exact sizes. We probe a small ladder of common strikes
+    until one loads, render the glyph there, then resize down to the
+    target body-text height.
+
+    Returns None when no colour-emoji font is on the system. The caller
+    falls back to a plain ASCII bullet so the slide still renders
+    cleanly on stripped-down Linux installs without Noto Color Emoji.
+    """
+    path = emoji_font_path()
+    if not path or not char:
+        return None
+    # Apple Color Emoji exposes strikes at 20/32/40/48/64/96/160.
+    # Pick a strike ≥ target_h and as close as possible to it; a small
+    # downscale on a bitmap-emoji render is fine, an upscale isn't.
+    for strike in (32, 40, 48, 64, 96, 160, 20):
+        if strike >= target_h or strike == 20:
+            try:
+                font = ImageFont.truetype(path, strike)
+                break
+            except OSError:
+                continue
+    else:
+        return None
+    try:
+        bbox = font.getbbox(char)
+        w = bbox[2] - bbox[0]
+        h = bbox[3] - bbox[1]
+        if w <= 0 or h <= 0:
+            return None
+        img = Image.new("RGBA", (w + 4, h + 4), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.text((-bbox[0] + 2, -bbox[1] + 2), char, font=font,
+               embedded_color=True)
+        if h != target_h:
+            scale = target_h / h
+            img = img.resize(
+                (max(1, int((w + 4) * scale)), max(1, int((h + 4) * scale))),
+                Image.LANCZOS,
+            )
+        return img
+    except Exception as e:
+        log.debug("emoji render failed for %r: %s", char, e)
+        return None
+
+
 def _darken_full(img: Image.Image, opacity: float = 0.62) -> None:
     """Heavy darken pass for the reveal slide — turns the hero photo into
     a moody backdrop so the text dominates without losing the visual
@@ -609,18 +660,24 @@ def _draw_cta_slide(img: Image.Image, slot: dict, topic: TopicConfig,
     line_h = cta_font.getbbox("Hg")[3] + 10
     block_h = line_h * len(headline_lines)
 
-    # Subtitle text below the headline.
+    # Subtitle: either a plain "subtext" string, or a list of
+    # (emoji_char, text_str) `bullets` to render with the system
+    # colour-emoji font. The save-bait outro uses the bullets path —
+    # emoji glyphs land as colour artwork next to each action line.
     sub_text = slot.get("subtext") or ""
+    bullets: list[tuple[str, str]] = slot.get("bullets") or []
     sub_font = _font(body_path, 30, FALLBACK_BODY)
-    sub_lines: list[str] = []
-    if sub_text:
-        sub_lines = balanced_wrap(sub_text, sub_font, safe_w, max_lines=2)
-    sub_line_h = int(sub_font.size * 1.32)
-    sub_block_h = sub_line_h * len(sub_lines)
+    sub_line_h = int(sub_font.size * 1.42)
+    if bullets:
+        sub_block_h = sub_line_h * len(bullets)
+        sub_lines = []
+    else:
+        sub_lines = balanced_wrap(sub_text, sub_font, safe_w, max_lines=2) if sub_text else []
+        sub_block_h = sub_line_h * len(sub_lines)
 
     # Position the bundle: anchored to the bottom-third of the slide,
     # above the footer pills, so the photo stack above stays uncrowded.
-    bundle_gap = 20 if sub_lines else 0
+    bundle_gap = 24 if (sub_lines or bullets) else 0
     bundle_h = block_h + bundle_gap + sub_block_h
     text_bottom = footer_y - 60
     text_y = text_bottom - bundle_h
@@ -638,8 +695,25 @@ def _draw_cta_slide(img: Image.Image, slot: dict, topic: TopicConfig,
             d.text((margin, text_y), ln, font=cta_font, fill=WHITE)
         text_y += line_h
 
-    if sub_lines:
-        sub_y = text_bottom - sub_block_h
+    sub_y = text_bottom - sub_block_h
+    if bullets:
+        glyph_h = int(sub_font.size * 0.92)
+        for emoji_char, text in bullets:
+            x = margin
+            glyph = _emoji_glyph(emoji_char, glyph_h)
+            if glyph:
+                # Align glyph's vertical centre with the text's cap height.
+                gy = sub_y + (sub_font.size - glyph.height) // 2 + 2
+                img.paste(glyph, (x, gy), glyph)
+                x += glyph.width + 14
+            else:
+                # Fallback: plain ASCII bullet so the slide still parses
+                # on Linux installs without Noto Color Emoji.
+                d.text((x, sub_y), "→", font=sub_font, fill=accent_light)
+                x += sub_font.getbbox("→ ")[2]
+            d.text((x, sub_y), text, font=sub_font, fill=SOFT_WHITE)
+            sub_y += sub_line_h
+    else:
         for ln in sub_lines:
             d.text((margin, sub_y), ln, font=sub_font, fill=SOFT_WHITE)
             sub_y += sub_line_h
@@ -821,10 +895,12 @@ def render(topic: TopicConfig, articles: list[Article],
     cta_slot = {
         "kind": "cta",
         "text": "SAVE THIS\nFOR LATER",
-        "subtext": (
-            "→  Save for the next watercooler talk\n"
-            "→  Send to the friend who missed it"
-        ),
+        # Bullets render with the system colour-emoji font. Falls back
+        # to a plain → arrow if no emoji font is present.
+        "bullets": [
+            ("💾", "Save for the next watercooler talk"),
+            ("📤", "Send to the friend who missed it"),
+        ],
         "eyebrow": "TODAY'S DIGEST · " + topic_label,
     }
     _draw_slide(cta_tile, cta_slot, topic, n_total, n_total)
