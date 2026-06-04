@@ -3,10 +3,38 @@
 # The Dockerfile is the source of truth for the build.
 # Deploys are CD-managed: a push to main triggers .github/workflows/deploy.yml.
 #
+# Networking:
+#   - LAN:      http://10.20.87.230:8088  (port published on the tailscale sidecar)
+#   - Tailscale: https://carousel-atom.tailef595f.ts.net  (Funnel, public HTTPS)
+#
+# The carousel container shares the tailscale sidecar's network namespace, so
+# `tailscale serve/funnel` proxies the tailnet domain to the app on 127.0.0.1:8000.
+#
 # Live dir on the server: /home/atom/carousel-atom
 #   - ./data  -> persistent SQLite seen-store + rendered runs (gitignored, not rsynced)
-#   - ./.env  -> secrets / config (gitignored, not rsynced)
+#   - ./.env  -> secrets / config incl. TS_AUTHKEY (gitignored, not rsynced)
 services:
+  # Tailscale sidecar: joins the tailnet as its own node `carousel-atom` and
+  # serves the app over HTTPS (Funnel). Owns the shared network namespace.
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: carousel-atom-ts
+    hostname: carousel-atom
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_HOSTNAME=carousel-atom
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+      - TS_SERVE_CONFIG=/config/serve.json
+    volumes:
+      - carousel_ts_state:/var/lib/tailscale
+      - ./deploy/tailscale-serve.json:/config/serve.json:ro
+    cap_add:
+      - net_admin
+    ports:
+      - "8088:8000"          # LAN access to the carousel app (8000/8080 taken on host)
+    restart: unless-stopped
+
   carousel:
     build:
       context: .
@@ -14,15 +42,19 @@ services:
     image: carousel-atom:local
     container_name: carousel-atom
     restart: unless-stopped
-    ports:
-      - "8088:8000"          # host:container — 8000/8080 are already used on this host
     env_file:
       - .env
     volumes:
       - ./data:/app/backend/data   # SQLite + rendered output survive restarts/redeploys
+    network_mode: service:tailscale  # share the sidecar's netns (no own `ports:`)
+    depends_on:
+      - tailscale
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 40s
+
+volumes:
+  carousel_ts_state:
