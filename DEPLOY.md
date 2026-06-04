@@ -37,9 +37,29 @@ the runner** (outbound only) rather than pushed from GitHub. A push to `main`
 redeploys within seconds.
 
 - **Live dir:** `/home/atom/carousel-atom` (code, synced by the workflow)
-- **App URL:** `http://10.20.87.230:8088` (host `8088` → container `8000`)
+- **Public URL:** `https://carousel-atom.tailef595f.ts.net` (Tailscale Funnel, auto HTTPS)
+- **LAN URL:** `http://10.20.87.230:8088` (host `8088` → container `8000`)
 - **Data:** `/home/atom/carousel-atom/data` → `/app/backend/data` (persistent)
-- **Secrets:** `/home/atom/carousel-atom/.env` (never committed, never rsynced)
+- **Secrets:** `/home/atom/carousel-atom/.env` (never committed, never rsynced; incl. `TS_AUTHKEY`)
+
+## Tailscale domain (public HTTPS)
+
+The app gets a stable public HTTPS domain via a **Tailscale sidecar** — the same
+pattern the other apps on this host use (`*-ts` containers). A `tailscale/tailscale`
+container (`carousel-atom-ts`) joins the tailnet as its own node `carousel-atom`,
+and the carousel container shares its network namespace (`network_mode:
+service:tailscale`). `tailscale serve`/`funnel` (declared in
+`deploy/tailscale-serve.json`) proxies the tailnet domain to the app on
+`127.0.0.1:8000`.
+
+- **Domain:** `https://carousel-atom.tailef595f.ts.net` (Funnel = public internet,
+  auto Let's Encrypt cert).
+- **Auth:** the node authenticates with `TS_AUTHKEY` from `.env` (never committed).
+  State persists in the `carousel_ts_state` Docker volume, so the node — and thus
+  the domain — is permanent across restarts/redeploys.
+- **Private instead of public?** Drop the `AllowFunnel` block from
+  `deploy/tailscale-serve.json` to make it tailnet-only (Serve).
+- **Inspect:** `docker exec carousel-atom-ts tailscale funnel status`.
 
 ## Persistent storage
 
