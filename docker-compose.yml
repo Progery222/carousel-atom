@@ -1,0 +1,27 @@
+# Self-hosted deployment for atom-server (10.20.87.230).
+# One image: FastAPI serves both the /api and the prebuilt frontend.
+# The Dockerfile is the source of truth for the build.
+#
+# Live dir on the server: /home/atom/carousel-atom
+#   - ./data  -> persistent SQLite seen-store + rendered runs (gitignored, not rsynced)
+#   - ./.env  -> secrets / config (gitignored, not rsynced)
+services:
+  carousel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: carousel-atom:local
+    container_name: carousel-atom
+    restart: unless-stopped
+    ports:
+      - "8088:8000"          # host:container — 8000/8080 are already used on this host
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/backend/data   # SQLite + rendered output survive restarts/redeploys
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
