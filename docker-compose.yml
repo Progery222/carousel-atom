@@ -1,6 +1,7 @@
 # Self-hosted deployment for atom-server (10.20.87.230).
 # One image: FastAPI serves both the /api and the prebuilt frontend.
 # The Dockerfile is the source of truth for the build.
+# Deploys are CD-managed: a push to main triggers .github/workflows/deploy.yml.
 #
 # Live dir on the server: /home/atom/carousel-atom
 #   - ./data  -> persistent SQLite seen-store + rendered runs (gitignored, not rsynced)
