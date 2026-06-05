@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,6 +15,8 @@ import time
 import uuid
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -83,6 +86,11 @@ async def _lifespan(_app: FastAPI):
     log.info("startup ok · %d topics · %d designs · %d delivery adapters",
              len(list_topics()), len(list_designs()), len(DELIVERY_ADAPTERS))
     yield
+    # Graceful shutdown: drop in-flight async render jobs. They are
+    # single-instance and don't survive a restart — consumers re-submit or
+    # fall back to GET /api/v1/runs/{run_id} once the run dir exists.
+    from api.jobs import shutdown_store
+    shutdown_store()
 
 
 app = FastAPI(title="Carousel Studio", lifespan=_lifespan)
@@ -144,6 +152,29 @@ async def _http_exc_handler(request: Request, exc: HTTPException):
         content={"detail": exc.detail},
         headers=exc.headers or {},
     )
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exc_handler(request: Request, exc: RequestValidationError):
+    """Wrap pydantic request-validation errors (422) in the unified envelope
+    for /api/v1 — internal `/` routes keep FastAPI's default `{detail: [...]}`
+    shape so the studio frontend (which parses it) is unaffected.
+    """
+    rid = getattr(request.state, "request_id", "")
+    errors = jsonable_encoder(exc.errors())
+    if request.url.path.startswith("/api/v1/"):
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "unprocessable_entity",
+                    "message": "request validation failed",
+                    "request_id": rid,
+                    "details": errors,
+                }
+            },
+        )
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 
 class _RequestContextMiddleware(BaseHTTPMiddleware):
@@ -267,6 +298,43 @@ def _to_render_out(result: dict, *, base: str = "") -> RenderOut:
     )
 
 
+# Sidecar file written next to the rendered slides so a run's caption +
+# article metadata survive past the in-memory `run_once` response.
+RUN_META_FILENAME = "run.json"
+
+
+def _persist_run(result: dict) -> None:
+    """Persist `run.json` alongside the slide PNGs for a successful render.
+
+    The pipeline writes only slide images to disk — the caption and the
+    selected article list live solely in the `run_once` return dict. We
+    persist them here, in the API layer (deliberately NOT inside
+    `core/pipeline`), so `GET /api/v1/runs/{run_id}`, the ZIP export and
+    the async job result can reconstruct a faithful response after the
+    original request is gone.
+
+    Written atomically (tmp file + os.replace) and best-effort: a failure
+    to persist must never fail a render that already succeeded.
+    """
+    try:
+        out_dir = Path(result["output_dir"])
+        meta = {
+            "run_id": result["run_id"],
+            "topic": result["topic"],
+            "design": result["design"],
+            "caption": result.get("caption", ""),
+            "articles": result.get("articles", []),
+            "created_at": int(time.time()),
+        }
+        out_dir.mkdir(parents=True, exist_ok=True)
+        tmp = out_dir / (RUN_META_FILENAME + ".tmp")
+        tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, out_dir / RUN_META_FILENAME)
+    except Exception:
+        log.warning("failed to persist %s for run %s",
+                    RUN_META_FILENAME, result.get("run_id"), exc_info=True)
+
+
 # ── Shared impl funcs (used by both internal /render and public /api/v1) ────
 
 
@@ -297,7 +365,18 @@ def preview_impl(topic: str, limit: int = 12) -> PreviewOut:
     return PreviewOut(**data)
 
 
+def _validate_topic_design(topic: str, design: str) -> None:
+    """Reject unknown topic/design up front with a clean 404 instead of
+    letting `run_once` fail deep in the pipeline and surface as a murky 409.
+    Mirrors the existing check in `preview_impl`."""
+    if topic not in list_topics():
+        raise HTTPException(status_code=404, detail=f"unknown topic: {topic}")
+    if design not in {d.slug for d in list_designs()}:
+        raise HTTPException(status_code=404, detail=f"unknown design: {design}")
+
+
 def render_impl(req: RenderRequest, *, base: str = "") -> RenderOut:
+    _validate_topic_design(req.topic, req.design)
     result = run_once(
         req.topic, req.design,
         mark_seen=req.mark_seen,
@@ -306,10 +385,12 @@ def render_impl(req: RenderRequest, *, base: str = "") -> RenderOut:
     )
     if result["status"] != "ok":
         raise HTTPException(status_code=409, detail=result)
+    _persist_run(result)
     return _to_render_out(result, base=base)
 
 
 def render_edit_impl(req: RenderEditRequest, *, base: str = "") -> RenderOut:
+    _validate_topic_design(req.topic, req.design)
     if not req.articles:
         raise HTTPException(status_code=400, detail="no articles supplied")
     overrides = [
@@ -329,10 +410,12 @@ def render_edit_impl(req: RenderEditRequest, *, base: str = "") -> RenderOut:
     )
     if result["status"] != "ok":
         raise HTTPException(status_code=409, detail=result)
+    _persist_run(result)
     return _to_render_out(result, base=base)
 
 
 def render_partial_impl(req: RenderPartialRequest, *, base: str = "") -> RenderOut:
+    _validate_topic_design(req.topic, req.design)
     if not req.articles:
         raise HTTPException(status_code=400, detail="no articles supplied")
     null_positions = [i for i, a in enumerate(req.articles) if a is None]
@@ -380,6 +463,7 @@ def render_partial_impl(req: RenderPartialRequest, *, base: str = "") -> RenderO
     )
     if result["status"] != "ok":
         raise HTTPException(status_code=409, detail=result)
+    _persist_run(result)
     return _to_render_out(result, base=base)
 
 
@@ -482,8 +566,12 @@ def deliver_run(run_id: str, req: DeliverRequest):
     edits in the preview, then publish without re-running the pipeline.
     Logs the delivery into the posts table so it shows up under `/runs`.
     """
+    # `req.topic` / `run_id` become path segments — guard against traversal.
+    for seg in (req.topic, run_id):
+        if not seg or "/" in seg or "\\" in seg or ".." in seg:
+            raise HTTPException(status_code=404, detail=f"run {run_id} not found")
     run_dir = OUTPUT_DIR / req.topic / run_id
-    if not run_dir.exists():
+    if not run_dir.resolve().is_relative_to(OUTPUT_DIR.resolve()) or not run_dir.exists():
         raise HTTPException(status_code=404, detail=f"run {run_id} not found")
     slide_paths = sorted(str(p) for p in run_dir.glob("slide_*.png"))
     if not slide_paths:

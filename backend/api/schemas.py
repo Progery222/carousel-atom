@@ -3,9 +3,20 @@
 between `api.server` and `api.v1`."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Annotated, Literal, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+# Topic/design slugs are filesystem directory / registry keys — lowercase
+# alphanumerics and underscores. The pattern also enforces non-empty. Caps
+# are generous on purpose: these models are SHARED with the internal studio
+# routes, so tight limits would risk rejecting legitimate studio requests.
+# An Annotated alias is the pydantic-v2-safe way to reuse a constraint across
+# fields (sharing a single `Field(...)` instance is not).
+Slug = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")]
+# Max number of articles in an edit/partial lineup. Real carousels use
+# news_per_carousel (5 across all topics today); 20 is ample headroom.
+_MAX_ARTICLES = 20
 
 
 class TopicOut(BaseModel):
@@ -28,34 +39,35 @@ class DeliveryOut(BaseModel):
 
 
 class RenderRequest(BaseModel):
-    topic: str
-    design: str
+    topic: Slug
+    design: Slug
     mark_seen: bool = True
     cross_topic_dedup: bool = False
-    deliver: str = ""  # adapter slug, e.g. "telegram"; empty = no delivery
+    # adapter slug, e.g. "telegram"; empty = no delivery (so no slug pattern)
+    deliver: str = Field(default="", max_length=64)
 
 
 class ArticleIn(BaseModel):
-    title: str
-    url: str
-    source: str
-    image_url: str = ""
-    description: str = ""
+    title: str = Field(max_length=500)
+    url: str = Field(max_length=2048)
+    source: str = Field(max_length=200)
+    image_url: str = Field(default="", max_length=2048)
+    description: str = Field(default="", max_length=4000)
 
 
 class RenderEditRequest(BaseModel):
     """Re-render a carousel using user-edited articles (titles, image URLs)."""
-    topic: str
-    design: str
-    articles: list[ArticleIn]
+    topic: Slug
+    design: Slug
+    articles: list[ArticleIn] = Field(min_length=1, max_length=_MAX_ARTICLES)
 
 
 class RenderPartialRequest(BaseModel):
     """Per-slide re-roll: items are either full articles (locked) or null
     (re-roll this slot with a fresh pick from the pipeline)."""
-    topic: str
-    design: str
-    articles: list[Optional[ArticleIn]]
+    topic: Slug
+    design: Slug
+    articles: list[Optional[ArticleIn]] = Field(min_length=1, max_length=_MAX_ARTICLES)
 
 
 class SlideOut(BaseModel):
@@ -123,3 +135,49 @@ class DeliverRequest(BaseModel):
     topic: str
     caption: str
     deliver: str = "telegram"
+
+
+# ── Async jobs (public /api/v1) ─────────────────────────────────────────────
+
+
+class JobOut(BaseModel):
+    """Status/result envelope for an async render job.
+
+    `job_id` is ephemeral (in-memory, single-instance — gone on restart and
+    after a TTL). The durable handle is `result.run_id`: a finished run's
+    slides + caption persist on disk and stay readable via
+    `GET /api/v1/runs/{run_id}`.
+    """
+    job_id: str
+    kind: str
+    status: str  # queued | running | succeeded | failed
+    created_at: int
+    started_at: Optional[int] = None
+    finished_at: Optional[int] = None
+    status_url: Optional[str] = None
+    result: Optional[RenderOut] = None
+    error: Optional[dict] = None
+
+
+class JobRenderRequest(RenderRequest):
+    kind: Literal["render"] = "render"
+    webhook_url: Optional[str] = Field(default=None, max_length=2048)
+
+
+class JobRenderEditRequest(RenderEditRequest):
+    kind: Literal["render_edit"] = "render_edit"
+    webhook_url: Optional[str] = Field(default=None, max_length=2048)
+
+
+class JobRenderPartialRequest(RenderPartialRequest):
+    kind: Literal["render_partial"] = "render_partial"
+    webhook_url: Optional[str] = Field(default=None, max_length=2048)
+
+
+# Discriminated by `kind` so OpenAPI/codegen and pydantic both route the body
+# to the right shape. `Literal`/`Union`/`Annotated` stay Python-3.9-safe
+# (unlike PEP 604 `X | Y`), matching the repo's pydantic-compat convention.
+JobRequest = Annotated[
+    Union[JobRenderRequest, JobRenderEditRequest, JobRenderPartialRequest],
+    Field(discriminator="kind"),
+]
