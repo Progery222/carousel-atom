@@ -7,10 +7,11 @@ interface EndpointDoc {
   path: string;
   summary: string;
   description: string;
+  status?: string; // success status code shown on the card (e.g. "202")
   query?: { name: string; type: string; required: boolean; desc: string }[];
   body?: string; // JSON example
   response: string; // JSON example
-  rateLimit: "heavy" | "light";
+  rateLimit: "heavy" | "light" | "none";
 }
 
 const ENDPOINTS: EndpointDoc[] = [
@@ -76,9 +77,9 @@ const ENDPOINTS: EndpointDoc[] = [
   {
     method: "POST",
     path: "/api/v1/render",
-    summary: "Render a fresh carousel",
+    summary: "Render a fresh carousel (sync)",
     description:
-      "Pulls fresh news for the topic, scores + dedupes, renders slides with the chosen design, generates a caption. Returns absolute slide URLs you can download. Sync — takes 10–30 seconds.",
+      "Pulls fresh news for the topic, scores + dedupes, renders slides with the chosen design, generates a caption. Returns absolute slide URLs you can download. Synchronous — blocks 10–40s. For anything user-facing or behind a proxy, prefer POST /api/v1/jobs (async). An unknown topic/design returns 404 before any work starts; oversized bodies return 422.",
     body: `{
   "topic": "f1",
   "design": "newsflash",
@@ -140,11 +141,65 @@ const ENDPOINTS: EndpointDoc[] = [
     rateLimit: "heavy",
   },
   {
+    method: "POST",
+    path: "/api/v1/jobs",
+    summary: "Submit an async render job",
+    status: "202",
+    description:
+      "Enqueue a render and return immediately with a job_id. Poll GET /api/v1/jobs/{job_id} or pass a webhook_url to be notified on completion. The body mirrors the sync render endpoints, tagged with kind: render | render_edit | render_partial. webhook_url is optional (https-only, SSRF-guarded).",
+    body: `{
+  "kind": "render",
+  "topic": "f1",
+  "design": "newsflash",
+  "webhook_url": "https://my-service.example.com/carousel/done"
+}`,
+    response: `// 202 Accepted
+{
+  "job_id": "9f1c2a...",
+  "kind": "render",
+  "status": "queued",
+  "created_at": 1715000000,
+  "status_url": "https://api.example.com/api/v1/jobs/9f1c2a..."
+}`,
+    rateLimit: "heavy",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/jobs/{job_id}",
+    summary: "Get async job status & result",
+    description:
+      "Poll for the job state: queued → running → succeeded | failed. On success, result holds the full RenderOut; on failure, error holds { code, message, details }. A job_id is ephemeral (in-memory, single-instance) — it 404s after a ~1h TTL or a restart. The durable handle is result.run_id (see GET /runs/{run_id}).",
+    response: `{
+  "job_id": "9f1c2a...",
+  "kind": "render",
+  "status": "succeeded",
+  "created_at": 1715000000,
+  "started_at": 1715000001,
+  "finished_at": 1715000034,
+  "result": { "status": "ok", "run_id": "f1_newsflash_...",
+              "caption": "...", "slides": [ ... ], "articles": [ ... ] },
+  "error": null
+}`,
+    rateLimit: "light",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/runs/{run_id}",
+    summary: "Re-fetch a finished run",
+    description:
+      "Reconstruct a previously rendered run from disk: caption, articles and absolute slide URLs. Durable counterpart to a job — keeps working across restarts and after the job is evicted. Degrades to slides-only for very old runs that predate run.json. Pass ?topic=... if a slug with underscores can't be recovered from run_id.",
+    query: [
+      { name: "topic", type: "string", required: false, desc: "Topic slug (only if run_id parsing is ambiguous)" },
+    ],
+    response: `(same shape as /render — a RenderOut)`,
+    rateLimit: "light",
+  },
+  {
     method: "GET",
     path: "/api/v1/export/{run_id}.zip",
     summary: "Download a rendered run as a ZIP",
     description:
-      "Returns a ZIP containing slide_*.png, caption.txt (when present), and metadata.json. The topic slug is auto-detected from run_id; pass ?topic=... explicitly if the slug contains underscores.",
+      "Returns a ZIP containing slide_*.png, caption.txt, and metadata.json. The topic slug is auto-detected from run_id; pass ?topic=... explicitly if the slug contains underscores.",
     query: [
       { name: "topic", type: "string", required: false, desc: "Topic slug (only if run_id parsing is ambiguous)" },
     ],
@@ -156,18 +211,18 @@ Content-Disposition: attachment; filename="<run_id>.zip"`,
     method: "GET",
     path: "/api/v1/health",
     summary: "Liveness check (no auth)",
-    description: "Always returns ok=true. Use it for uptime monitoring without burning your rate-limit budget.",
+    description: "Always returns ok=true. No X-API-Key required. Use it for uptime monitoring without burning your rate-limit budget.",
     response: `{ "ok": true, "service": "carousel-studio", "version": "1" }`,
-    rateLimit: "light",
+    rateLimit: "none",
   },
 ];
 
 const ERROR_CODES: { code: number; key: string; meaning: string }[] = [
-  { code: 400, key: "bad_request", meaning: "Validation failed (e.g. empty articles list, unknown delivery adapter)." },
+  { code: 400, key: "bad_request", meaning: "Malformed request (e.g. unknown delivery adapter)." },
   { code: 401, key: "unauthorized", meaning: "Missing or invalid X-API-Key." },
-  { code: 404, key: "not_found", meaning: "Topic or run not found." },
-  { code: 409, key: "conflict / no_articles / no_fresh / no_usable", meaning: "Pipeline couldn't assemble a carousel. See details.diagnostics." },
-  { code: 413, key: "payload_too_large", meaning: "Uploaded image exceeds 12 MB." },
+  { code: 404, key: "not_found", meaning: "Unknown topic, design, run, or job." },
+  { code: 409, key: "conflict / no_articles / no_fresh / no_usable", meaning: "Pipeline couldn't assemble a carousel. See details (diagnostics)." },
+  { code: 422, key: "unprocessable_entity", meaning: "Request body failed validation (bad slug, oversized fields, >20 articles). See details (invalid fields)." },
   { code: 429, key: "rate_limited", meaning: "Per-key rate limit exceeded. See Retry-After header." },
   { code: 503, key: "service_unavailable", meaning: "Public API disabled — operator has not set CAROUSEL_API_KEYS." },
 ];
@@ -216,8 +271,17 @@ function EndpointCard({ ep }: { ep: EndpointDoc }) {
           {ep.method}
         </span>
         <code className="font-mono text-sm text-ink-100">{ep.path}</code>
+        {ep.status && (
+          <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-amber-500/15 text-amber-400">
+            {ep.status}
+          </span>
+        )}
         <span className="text-[10px] uppercase tracking-wider text-ink-400 ml-auto">
-          {ep.rateLimit === "heavy" ? "Heavy tier" : "Light tier"}
+          {ep.rateLimit === "heavy"
+            ? "Heavy tier"
+            : ep.rateLimit === "light"
+              ? "Light tier"
+              : "No auth"}
         </span>
       </header>
       <p className="text-sm text-ink-200 font-medium mb-1">{ep.summary}</p>
@@ -284,9 +348,14 @@ export default function ApiDocsPage() {
         <main>
           <h1 className="text-4xl font-bold mb-3">Carousel Studio API</h1>
           <p className="text-ink-300 mb-6 max-w-2xl">
-            Generate TikTok / Instagram-ready news carousels from your own service.
-            Authenticated server-to-server REST API. Returns PNG slides + a caption
-            you can post directly.
+            Generate TikTok / Instagram-ready news carousels from your own
+            service. Key-authed REST API with sync &amp; async (job + webhook)
+            rendering. Returns PNG slides + a caption you can post directly.
+            Building a browser app? Front it with a BFF —{" "}
+            <a href="#browser-key-safety" className="text-accent hover:underline">
+              never ship the key to the browser
+            </a>
+            .
           </p>
           <div className="flex flex-wrap gap-3 mb-10">
             <a
@@ -318,7 +387,7 @@ export default function ApiDocsPage() {
           <Section id="authentication" title="Authentication">
             <p>
               Every request to <code className="text-accent">/api/v1/*</code> (except{" "}
-              <code className="text-accent">/health</code>) must include an{" "}
+              <code className="text-accent">/api/v1/health</code>) must include an{" "}
               <code className="text-accent">X-API-Key</code> header. Keys are configured
               by the server operator via the <code>CAROUSEL_API_KEYS</code> environment
               variable.
@@ -336,56 +405,81 @@ curl -H "X-API-Key: abc123" https://your-app.example.com/api/v1/topics`}</CodeBl
           </Section>
 
           <Section id="quickstart" title="Quickstart">
-            <p>Three minimal end-to-end recipes:</p>
-            <CodeBlock lang="curl">{`# 1. List topics
-curl -H "X-API-Key: $KEY" https://api.example.com/api/v1/topics
+            <p>
+              Recommended flow: submit an <strong>async job</strong>, poll until
+              it finishes, then read the slides. (A render takes 10–40s, so a
+              long-held sync request can hit proxy/Funnel timeouts.) Ready-to-run
+              clients live in{" "}
+              <code className="text-accent">docs/examples/</code> (Python,
+              curl, Node BFF, browser, webhook receiver).
+            </p>
+            <CodeBlock lang="curl">{`BASE=https://api.example.com; KEY=your-api-key
 
-# 2. Render a carousel
-curl -X POST https://api.example.com/api/v1/render \\
-  -H "X-API-Key: $KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{"topic":"f1","design":"newsflash"}'
+# 1. Discover what you can render
+curl -H "X-API-Key: $KEY" "$BASE/api/v1/topics"
 
-# 3. Download the result as a ZIP
-curl -H "X-API-Key: $KEY" \\
-  -o slides.zip \\
-  https://api.example.com/api/v1/export/<run_id>.zip`}</CodeBlock>
+# 2. Submit an async render → returns a job_id
+JOB=$(curl -s -H "X-API-Key: $KEY" -H "Content-Type: application/json" \\
+  -d '{"kind":"render","topic":"f1","design":"newsflash"}' \\
+  "$BASE/api/v1/jobs" | jq -r .job_id)
+
+# 3. Poll until status == succeeded | failed
+curl -H "X-API-Key: $KEY" "$BASE/api/v1/jobs/$JOB" | jq
+
+# 4. Re-fetch any time by run_id (durable; survives restarts)
+curl -H "X-API-Key: $KEY" "$BASE/api/v1/runs/<run_id>" | jq`}</CodeBlock>
 
             <CodeBlock lang="javascript">{`const BASE = "https://api.example.com/api/v1";
-const headers = { "X-API-Key": process.env.CAROUSEL_API_KEY };
+const headers = { "X-API-Key": process.env.CAROUSEL_API_KEY,
+                  "Content-Type": "application/json" };
 
-const topics = await fetch(\`\${BASE}/topics\`, { headers }).then(r => r.json());
-
-const render = await fetch(\`\${BASE}/render\`, {
+// submit
+const job = await fetch(\`\${BASE}/jobs\`, {
   method: "POST",
-  headers: { ...headers, "Content-Type": "application/json" },
-  body: JSON.stringify({ topic: "f1", design: "newsflash" }),
+  headers,
+  body: JSON.stringify({ kind: "render", topic: "f1", design: "newsflash" }),
 }).then(r => r.json());
 
-console.log(render.slides.map(s => s.url));
-console.log(render.caption);`}</CodeBlock>
+// poll
+let cur;
+do {
+  await new Promise(r => setTimeout(r, 3000));
+  cur = await fetch(\`\${BASE}/jobs/\${job.job_id}\`, { headers }).then(r => r.json());
+} while (cur.status === "queued" || cur.status === "running");
 
-            <CodeBlock lang="python">{`import os, requests
+if (cur.status === "failed") throw new Error(cur.error.message);
+console.log(cur.result.caption, cur.result.slides.map(s => s.url));`}</CodeBlock>
+
+            <CodeBlock lang="python">{`import os, time, requests
 
 BASE = "https://api.example.com/api/v1"
 HEADERS = {"X-API-Key": os.environ["CAROUSEL_API_KEY"]}
 
-topics = requests.get(f"{BASE}/topics", headers=HEADERS).json()
+job = requests.post(f"{BASE}/jobs", headers=HEADERS,
+                    json={"kind": "render", "topic": "f1", "design": "newsflash"}).json()
 
-r = requests.post(
-    f"{BASE}/render",
-    headers=HEADERS,
-    json={"topic": "f1", "design": "newsflash"},
-).json()
+while True:
+    cur = requests.get(f"{BASE}/jobs/{job['job_id']}", headers=HEADERS).json()
+    if cur["status"] in ("succeeded", "failed"):
+        break
+    time.sleep(3)
 
-for slide in r["slides"]:
+if cur["status"] == "failed":
+    raise RuntimeError(cur["error"])
+
+run = cur["result"]
+print(run["caption"])
+for slide in run["slides"]:
     print(slide["url"])
 
-# Download as zip
-zip_bytes = requests.get(
-    f"{BASE}/export/{r['run_id']}.zip", headers=HEADERS
-).content
-open(f"{r['run_id']}.zip", "wb").write(zip_bytes)`}</CodeBlock>
+# Download the run as a ZIP
+zip_bytes = requests.get(f"{BASE}/export/{run['run_id']}.zip", headers=HEADERS).content
+open(f"{run['run_id']}.zip", "wb").write(zip_bytes)`}</CodeBlock>
+            <p className="text-xs text-ink-400">
+              Prefer the sync path for quick scripts? <code>POST /api/v1/render</code>{" "}
+              with the same body minus <code>kind</code> returns the finished
+              result directly — use a client timeout ≥ 60s.
+            </p>
           </Section>
 
           <Section id="endpoints" title="Endpoints">
@@ -439,20 +533,23 @@ open(f"{r['run_id']}.zip", "wb").write(zip_bytes)`}</CodeBlock>
             <ul className="list-disc list-inside text-ink-300 space-y-1">
               <li>
                 <strong className="text-ink-100">Heavy</strong> — 30 req/min by
-                default. Applies to <code>/render</code>, <code>/render/edit</code>,{" "}
-                <code>/render/partial</code>, <code>/export/*.zip</code>. Configure
-                via <code>CAROUSEL_API_RATE_LIMIT</code>.
+                default. Applies to <code>/render*</code>, <code>/jobs</code>{" "}
+                (submit), <code>/export/*.zip</code>. Configure via{" "}
+                <code>CAROUSEL_API_RATE_LIMIT</code>.
               </li>
               <li>
                 <strong className="text-ink-100">Light</strong> — 120 req/min by
                 default. Applies to <code>/topics</code>, <code>/designs</code>,{" "}
-                <code>/preview/articles</code>. Configure via{" "}
+                <code>/preview/articles</code>, <code>/jobs/{`{id}`}</code>,{" "}
+                <code>/runs/{`{id}`}</code>. Configure via{" "}
                 <code>CAROUSEL_API_RATE_LIMIT_LIGHT</code>.
               </li>
             </ul>
             <p>
               Exceeded responses come back as <code>429</code> with a{" "}
-              <code>Retry-After</code> header (seconds).
+              <code>Retry-After</code> header (seconds). Async throughput is also
+              bounded by <code>CAROUSEL_API_JOB_WORKERS</code> (default 2
+              concurrent renders) — enqueue is instant, but only N run at once.
             </p>
           </Section>
 
@@ -464,17 +561,98 @@ open(f"{r['run_id']}.zip", "wb").write(zip_bytes)`}</CodeBlock>
             </p>
           </Section>
 
-          <Section id="render-timing" title="Async note">
+          <Section id="async-jobs" title="Async jobs">
             <p>
-              <code>/render</code> is <strong>synchronous</strong> — it returns when
-              slides are written to disk (typically 10–30s, dominated by image
-              fetching). Use a generous client timeout (≥60s) and avoid putting
-              this call directly on a user-facing request thread.
+              A render takes <strong>10–40s</strong> (image fetching dominates).
+              Rather than hold an HTTP connection open that long — fragile behind
+              a reverse proxy / Tailscale Funnel — submit a job to{" "}
+              <code>POST /api/v1/jobs</code> and poll, or supply a{" "}
+              <code>webhook_url</code>.
             </p>
+            <CodeBlock lang="text">{`queued ──▶ running ──▶ succeeded   (result: RenderOut)
+                   └──▶ failed      (error: { code, message, details? })`}</CodeBlock>
             <p>
-              If you need fire-and-forget rendering, run the call in your own
-              background worker and poll <code>/export/{`{run_id}`}.zip</code>{" "}
-              when it returns.
+              Poll <code>status_url</code> every 2–5s. A failed render (e.g. no
+              fresh stories today) ends in <code>failed</code> with the pipeline
+              diagnostics under <code>error.details</code> — the worker never
+              hangs.
+            </p>
+            <div className="border border-amber-500/30 bg-amber-500/5 rounded-xl p-4">
+              <p className="text-amber-300 font-medium text-xs mb-1">
+                Durability — read this
+              </p>
+              <p className="text-xs text-ink-300">
+                The job store is <strong>in-process and single-instance</strong>:
+                a <code>job_id</code> is ephemeral. It is evicted ~1h after
+                completion (<code>CAROUSEL_API_JOB_TTL</code>) and dropped on a
+                restart/redeploy. The durable handle is <code>run_id</code> —
+                once a render succeeds, its slides + caption persist on disk and
+                stay readable via <code>GET /api/v1/runs/{`{run_id}`}</code> even
+                after the job is gone. Persist the <code>run_id</code> and treat a{" "}
+                <code>404</code> on a <code>job_id</code> as "poll the run
+                instead." Submitting the same render twice is not deduplicated.
+              </p>
+            </div>
+          </Section>
+
+          <Section id="webhooks" title="Webhooks">
+            <p>
+              Pass <code>webhook_url</code> on <code>POST /api/v1/jobs</code> and
+              the server POSTs the result when the job reaches a terminal state —{" "}
+              <strong>on both succeeded and failed</strong>:
+            </p>
+            <CodeBlock lang="json">{`{
+  "job_id": "9f1c2a...",
+  "kind": "render",
+  "status": "succeeded",
+  "result": { "...RenderOut, or null on failure..." },
+  "error": null,
+  "finished_at": 1715000034
+}`}</CodeBlock>
+            <p>
+              When the operator sets <code>CAROUSEL_WEBHOOK_SECRET</code>, each
+              delivery carries an <code>X-Carousel-Signature: sha256=&lt;hex&gt;</code>{" "}
+              header — an HMAC-SHA256 of the raw body. Verify it before trusting
+              the payload:
+            </p>
+            <CodeBlock lang="python">{`import hashlib, hmac
+
+def verify(raw_body: bytes, header: str, secret: str) -> bool:
+    expected = "sha256=" + hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header or "")`}</CodeBlock>
+            <p className="text-xs text-ink-400">
+              Delivery is best-effort: 5s timeout, no redirects, one retry. Your
+              receiver should be idempotent and return 2xx quickly.{" "}
+              <strong>SSRF rules:</strong> <code>webhook_url</code> must be{" "}
+              <code>https://</code> and resolve to a public IP — loopback,
+              RFC1918, link-local and the CGNAT/Tailscale{" "}
+              <code>100.64.0.0/10</code> range are rejected before the POST
+              (best-effort — re-resolution at connect time means a DNS-rebinding
+              caller could bypass it; gate untrusted callers with{" "}
+              <code>CAROUSEL_WEBHOOK_ALLOW_HOSTS</code> + network egress controls).
+              The operator can allow a private receiver via{" "}
+              <code>CAROUSEL_WEBHOOK_ALLOW_HOSTS</code>.
+            </p>
+          </Section>
+
+          <Section id="browser-key-safety" title="Browsers & key safety">
+            <p>
+              Building a <strong>browser frontend</strong> on top of this API?{" "}
+              <strong className="text-ink-100">
+                Never put the API key in browser JavaScript
+              </strong>{" "}
+              — anyone can read it. Use a Backend-for-Frontend (BFF): your own
+              server holds the key and proxies calls; the browser talks only to
+              your server.
+            </p>
+            <CodeBlock lang="text">{`Browser ──(no key)──▶ Your backend ──(X-API-Key)──▶ Carousel /api/v1`}</CodeBlock>
+            <p className="text-xs text-ink-400">
+              <code>CAROUSEL_API_CORS</code> defaults to <code>*</code> (the
+              typical caller is server-to-server). Listing browser origins there
+              is only for a trusted same-origin admin tool — it is not a green
+              light for key-in-browser. See{" "}
+              <code>docs/examples/bff_proxy.mjs</code> +{" "}
+              <code>browser.ts</code> for a working pair.
             </p>
           </Section>
         </main>
@@ -488,10 +666,12 @@ open(f"{r['run_id']}.zip", "wb").write(zip_bytes)`}</CodeBlock>
               ["authentication", "Authentication"],
               ["quickstart", "Quickstart"],
               ["endpoints", "Endpoints"],
+              ["async-jobs", "Async jobs"],
+              ["webhooks", "Webhooks"],
+              ["browser-key-safety", "Browsers & keys"],
               ["errors", "Errors"],
               ["rate-limits", "Rate limits"],
               ["request-tracing", "Request tracing"],
-              ["render-timing", "Async note"],
             ].map(([id, label]) => (
               <a
                 key={id}
