@@ -1,0 +1,82 @@
+name: Provision API key
+
+# One-off, manually-dispatched utility to install/rotate the external /api/v1
+# admin key in the server-side .env WITHOUT SSH access. The key value lives in
+# the `CENTRAL_API_KEY_PAIR` repo secret (form: `name:key`), never in git.
+# Runs on the self-hosted runner that lives on atom-server, merges the key into
+# /home/atom/carousel-atom/.env (preserving any existing keys), recreates the
+# container, and verifies the key authenticates. No-ops if the secret is empty.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: provision-atom-carousel
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    runs-on: [self-hosted, carousel]
+    steps:
+      - name: Merge central API key into .env and restart
+        working-directory: /home/atom/carousel-atom
+        env:
+          PAIR: ${{ secrets.CENTRAL_API_KEY_PAIR }}
+        run: |
+          set -eu
+          if [ -z "${PAIR:-}" ]; then
+            echo "CENTRAL_API_KEY_PAIR secret is empty — nothing to provision."
+            exit 0
+          fi
+
+          # Mask the bare key value (substring after the first ':') so a stray
+          # echo or curl error can never print it to the public Actions log.
+          KEYVAL="${PAIR#*:}"
+          echo "::add-mask::$KEYVAL"
+
+          touch .env
+          chmod 600 .env
+
+          if grep -q '^CAROUSEL_API_KEYS=' .env; then
+            CUR="$(grep -m1 '^CAROUSEL_API_KEYS=' .env | cut -d= -f2-)"
+            case ",$CUR," in
+              *",$PAIR,"*)
+                echo "Central key already present in CAROUSEL_API_KEYS — no change."
+                ;;
+              *)
+                NEW="$CUR,$PAIR"
+                awk -v val="CAROUSEL_API_KEYS=$NEW" '
+                  /^CAROUSEL_API_KEYS=/ && !seen { print val; seen=1; next }
+                  { print }
+                ' .env > .env.tmp && mv .env.tmp .env
+                echo "Appended central key to existing CAROUSEL_API_KEYS."
+                ;;
+            esac
+          else
+            printf 'CAROUSEL_API_KEYS=%s\n' "$PAIR" >> .env
+            echo "Created CAROUSEL_API_KEYS with the central key."
+          fi
+          chmod 600 .env
+
+          echo "Recreating container with the new environment..."
+          docker compose up -d
+
+          echo "Waiting for the app to report healthy..."
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8088/health >/dev/null 2>&1; then
+              echo "App healthy."
+              break
+            fi
+            sleep 2
+          done
+
+          echo "Verifying the central key authenticates against /api/v1..."
+          code="$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "X-API-Key: $KEYVAL" \
+            http://localhost:8088/api/v1/auth/verify)"
+          echo "GET /api/v1/auth/verify -> HTTP $code"
+          if [ "$code" != "200" ]; then
+            echo "Central key did NOT authenticate (expected 200). Check CAROUSEL_API_KEYS."
+            exit 1
+          fi
+          echo "Central API key is live."
