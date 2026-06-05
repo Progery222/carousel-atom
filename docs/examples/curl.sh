@@ -1,45 +1,65 @@
 #!/usr/bin/env bash
 # Carousel Studio /api/v1 — curl cookbook. Needs `jq` for the pretty output.
 #
-#   BASE=https://your-app.example.com KEY=your-api-key ./curl.sh
+# Every JSON response uses the envelope: {success, data, meta}.
+# Pipe through `jq .data` (or `jq .data.<field>`) to reach the payload.
+#
+#   ADMIN_KEY=your-admin-key BASE=https://your-app.example.com ./curl.sh
 set -euo pipefail
 
 BASE="${BASE:-http://localhost:8000}"
-KEY="${KEY:?set KEY=your-api-key}"
-AUTH=(-H "X-API-Key: $KEY")
+ADMIN_KEY="${ADMIN_KEY:?set ADMIN_KEY=your-admin-api-key}"
+AUTH=(-H "X-API-Key: $ADMIN_KEY")
 JSON=(-H "Content-Type: application/json")
 
-echo "── health (no auth) ──"
-curl -fsS "$BASE/api/v1/health" | jq
+echo "── service meta (no auth) ──"
+curl -fsS "$BASE/api/v1/meta" | jq .data
+
+echo "── create a scoped read+write key (admin) ──"
+KEY=$(curl -fsS "${AUTH[@]}" "${JSON[@]}" \
+  -d '{"name":"example_consumer","scopes":["read","write"]}' \
+  "$BASE/api/v1/api-keys" | jq -r .data.key)
+echo "new key: $KEY"
+
+RAUTH=(-H "X-API-Key: $KEY")
 
 echo "── discovery ──"
-curl -fsS "${AUTH[@]}" "$BASE/api/v1/topics"  | jq '.[].slug'
-curl -fsS "${AUTH[@]}" "$BASE/api/v1/designs" | jq '.[].slug'
+curl -fsS "${RAUTH[@]}" "$BASE/api/v1/topics"  | jq '.data[].slug'
+curl -fsS "${RAUTH[@]}" "$BASE/api/v1/designs" | jq '.data[].slug'
 
 echo "── preview candidates (no render) ──"
-curl -fsS "${AUTH[@]}" "$BASE/api/v1/preview/articles?topic=f1&limit=8" | jq '.candidates | length'
+curl -fsS "${RAUTH[@]}" "${JSON[@]}" \
+  -d '{"topic":"f1","limit":8}' \
+  "$BASE/api/v1/actions/preview" | jq '.data.candidates | length'
 
 echo "── async render → poll → fetch ──"
-JOB=$(curl -fsS "${AUTH[@]}" "${JSON[@]}" \
+JOB=$(curl -fsS "${RAUTH[@]}" "${JSON[@]}" \
   -d '{"kind":"render","topic":"f1","design":"newsflash"}' \
-  "$BASE/api/v1/jobs" | jq -r .job_id)
+  "$BASE/api/v1/jobs" | jq -r .data.job_id)
 echo "job: $JOB"
 
-until STATUS=$(curl -fsS "${AUTH[@]}" "$BASE/api/v1/jobs/$JOB" | jq -r .status); \
+until STATUS=$(curl -fsS "${RAUTH[@]}" "$BASE/api/v1/jobs/$JOB" | jq -r .data.status); \
       [ "$STATUS" = succeeded ] || [ "$STATUS" = failed ]; do
-  echo "  …$STATUS"; sleep 3
+  echo "  ...$STATUS"; sleep 3
 done
 echo "final: $STATUS"
 
-RUN=$(curl -fsS "${AUTH[@]}" "$BASE/api/v1/jobs/$JOB" | jq -r .result.run_id)
+RUN=$(curl -fsS "${RAUTH[@]}" "$BASE/api/v1/jobs/$JOB" | jq -r .data.result.run_id)
 echo "run_id: $RUN"
 
-echo "── re-fetch the run + download zip ──"
-curl -fsS "${AUTH[@]}" "$BASE/api/v1/runs/$RUN" | jq '{caption, slides: (.slides | length)}'
-curl -fsS "${AUTH[@]}" "$BASE/api/v1/export/$RUN.zip" -o "$RUN.zip"
+echo "── re-fetch the run ──"
+curl -fsS "${RAUTH[@]}" "$BASE/api/v1/runs/$RUN" \
+  | jq '{caption: .data.caption, slides: (.data.slides | length)}'
+
+echo "── download zip ──"
+curl -fsS "${RAUTH[@]}" "$BASE/api/v1/runs/$RUN/export" -o "$RUN.zip"
 echo "saved $RUN.zip"
 
-echo "── sync render (alternative; blocks 10–40s, no \"kind\" field) ──"
-curl -fsS --max-time 90 "${AUTH[@]}" "${JSON[@]}" \
+echo "── list runs (cursor-paginated) ──"
+PAGE=$(curl -fsS "${RAUTH[@]}" "$BASE/api/v1/runs?limit=5")
+echo "$PAGE" | jq '{count: (.data.items | length), next_cursor: .data.next_cursor}'
+
+echo "── sync render (alternative; blocks 10-40s) ──"
+curl -fsS --max-time 90 "${RAUTH[@]}" "${JSON[@]}" \
   -d '{"topic":"f1","design":"newsflash"}' \
-  "$BASE/api/v1/render" | jq '{run_id, slides: (.slides | length)}'
+  "$BASE/api/v1/actions/render" | jq '{run_id: .data.run_id, slides: (.data.slides | length)}'

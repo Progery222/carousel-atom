@@ -3,32 +3,122 @@ import { API_BASE } from "../api";
 
 /** Endpoint reference data — single source of truth for the docs page. */
 interface EndpointDoc {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "DELETE";
   path: string;
   summary: string;
   description: string;
   status?: string; // success status code shown on the card (e.g. "202")
+  scope: "none" | "read" | "write" | "admin";
   query?: { name: string; type: string; required: boolean; desc: string }[];
   body?: string; // JSON example
-  response: string; // JSON example
+  response: string; // JSON example (always shows envelope)
   rateLimit: "heavy" | "light" | "none";
 }
 
+const RENDER_OUT = `{
+  "success": true,
+  "data": {
+    "status": "ok",
+    "run_id": "f1_newsflash_1715000000_a1b2c3",
+    "topic": "f1",
+    "design": "newsflash",
+    "caption": "F1 News · Verstappen wins Monaco...",
+    "articles": [
+      { "title": "...", "url": "...", "source": "...",
+        "image_url": "...", "description": "..." }
+    ],
+    "slides": [
+      { "index": 0, "url": "https://your-app.example.com/output/f1/.../slide_0.png" }
+    ],
+    "diagnostics": { "raw": 87, "fresh": 42, "after_enrich": 18 }
+  },
+  "meta": { "request_id": "ab12cd34" }
+}`;
+
 const ENDPOINTS: EndpointDoc[] = [
+  // ── System ──────────────────────────────────────────────────────────────
+  {
+    method: "GET",
+    path: "/api/v1/health",
+    summary: "Liveness ping (no auth)",
+    description:
+      "Always returns ok. No X-API-Key required. Use it for uptime monitoring without burning your rate-limit budget.",
+    scope: "none",
+    response: `{
+  "success": true,
+  "data": { "status": "ok", "version": "0.1.0" },
+  "meta": { "request_id": "ab12cd34" }
+}`,
+    rateLimit: "none",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/meta",
+    summary: "Service metadata / capability descriptor (no auth)",
+    description:
+      "Machine-readable contract: service name, API version, available resources and actions, supported scopes, pagination style, auth scheme. A central orchestrator reads this to learn what the service exposes.",
+    scope: "none",
+    response: `{
+  "success": true,
+  "data": {
+    "service": "carousel-studio",
+    "version": "0.1.0",
+    "api_version": "v1",
+    "capabilities": {
+      "resources": ["topics", "designs", "runs", "jobs", "api-keys"],
+      "actions": ["render", "render-edit", "render-partial", "preview"]
+    },
+    "scopes": ["read", "write", "admin"],
+    "pagination": { "style": "cursor", "limit_param": "limit",
+                    "cursor_param": "cursor", "default_limit": 20, "max_limit": 100 },
+    "auth": { "type": "apiKey", "in": "header", "name": "X-API-Key" }
+  },
+  "meta": { "request_id": "ab12cd34" }
+}`,
+    rateLimit: "light",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/auth/verify",
+    summary: "Verify the calling API key",
+    description:
+      "Returns the key_id, name, and scopes of the key used to authenticate this request. Useful for confirming a key is valid and checking what it can do.",
+    scope: "read",
+    response: `{
+  "success": true,
+  "data": { "key_id": "k_abc123", "name": "partner_acme", "scopes": ["read", "write"] },
+  "meta": { "request_id": "ab12cd34" }
+}`,
+    rateLimit: "light",
+  },
+  // ── Discovery ────────────────────────────────────────────────────────────
   {
     method: "GET",
     path: "/api/v1/topics",
     summary: "List available topics",
     description:
-      "Every topic configured in backend/topics/. Use the slug field for /render calls.",
-    response: `[
+      "Every topic configured in backend/topics/. Use the slug field for render actions and job requests.",
+    scope: "read",
+    response: `{
+  "success": true,
+  "data": [
+    { "slug": "f1", "name": "F1 Daily", "source_count": 8, "news_per_carousel": 5 }
+  ],
+  "meta": { "request_id": "ab12cd34" }
+}`,
+    rateLimit: "light",
+  },
   {
-    "slug": "f1",
-    "name": "F1 Daily",
-    "source_count": 8,
-    "news_per_carousel": 5
-  }
-]`,
+    method: "GET",
+    path: "/api/v1/topics/{slug}",
+    summary: "Get a single topic",
+    description: "Returns the topic config for one slug. 404 if unknown.",
+    scope: "read",
+    response: `{
+  "success": true,
+  "data": { "slug": "f1", "name": "F1 Daily", "source_count": 8, "news_per_carousel": 5 },
+  "meta": { "request_id": "ab12cd34" }
+}`,
     rateLimit: "light",
   },
   {
@@ -36,50 +126,40 @@ const ENDPOINTS: EndpointDoc[] = [
     path: "/api/v1/designs",
     summary: "List available designs",
     description:
-      "Every design template registered in backend/designs/__init__.py. Use the slug field for /render calls.",
-    response: `[
-  {
-    "slug": "newsflash",
-    "name": "Newsflash",
-    "description": "Hero photo + bold headline on a brand-colored card."
-  }
-]`,
-    rateLimit: "light",
-  },
-  {
-    method: "GET",
-    path: "/api/v1/preview/articles",
-    summary: "Preview fresh article candidates (no render)",
-    description:
-      "Runs the news fetch + freshness + scoring pipeline without rendering slides. Use this to pre-flight a carousel — show the user candidate stories and let them pick.",
-    query: [
-      { name: "topic", type: "string", required: true, desc: "Topic slug" },
-      { name: "limit", type: "int", required: false, desc: "Max candidates (default 12)" },
-    ],
+      "Every design template registered in backend/designs/__init__.py. Use the slug field for render actions.",
+    scope: "read",
     response: `{
-  "topic": "f1",
-  "raw": 87,
-  "fresh": 42,
-  "enriched": 18,
-  "candidates": [
-    {
-      "title": "Verstappen wins Monaco GP",
-      "url": "https://...",
-      "source": "f1.com",
-      "image_url": "https://...",
-      "description": "...",
-      "score": 4.7
-    }
-  ]
+  "success": true,
+  "data": [
+    { "slug": "newsflash", "name": "Newsflash",
+      "description": "Hero photo + bold headline on a brand-colored card." }
+  ],
+  "meta": { "request_id": "ab12cd34" }
 }`,
     rateLimit: "light",
   },
   {
+    method: "GET",
+    path: "/api/v1/designs/{slug}",
+    summary: "Get a single design",
+    description: "Returns the design metadata for one slug. 404 if unknown.",
+    scope: "read",
+    response: `{
+  "success": true,
+  "data": { "slug": "newsflash", "name": "Newsflash",
+            "description": "Hero photo + bold headline on a brand-colored card." },
+  "meta": { "request_id": "ab12cd34" }
+}`,
+    rateLimit: "light",
+  },
+  // ── Actions ──────────────────────────────────────────────────────────────
+  {
     method: "POST",
-    path: "/api/v1/render",
+    path: "/api/v1/actions/render",
     summary: "Render a fresh carousel (sync)",
     description:
-      "Pulls fresh news for the topic, scores + dedupes, renders slides with the chosen design, generates a caption. Returns absolute slide URLs you can download. Synchronous — blocks 10–40s. For anything user-facing or behind a proxy, prefer POST /api/v1/jobs (async). An unknown topic/design returns 404 before any work starts; oversized bodies return 422.",
+      "Pull fresh news for the topic, score + dedupe, render slides with the chosen design, generate a caption. Returns absolute slide URLs. Synchronous — blocks 10–40s. For anything user-facing or behind a proxy, prefer POST /api/v1/jobs (async). An unknown topic/design returns 404 before any work starts; oversized bodies return 422.",
+    scope: "write",
     body: `{
   "topic": "f1",
   "design": "newsflash",
@@ -87,30 +167,16 @@ const ENDPOINTS: EndpointDoc[] = [
   "cross_topic_dedup": false,
   "deliver": ""
 }`,
-    response: `{
-  "status": "ok",
-  "run_id": "f1_newsflash_1715000000_a1b2c3",
-  "topic": "f1",
-  "design": "newsflash",
-  "caption": "F1 News · Verstappen wins Monaco...",
-  "articles": [
-    { "title": "...", "url": "...", "source": "...",
-      "image_url": "...", "description": "..." }
-  ],
-  "slides": [
-    { "index": 0, "url": "https://api.example.com/output/f1/.../slide_0.png" }
-  ],
-  "diagnostics": { "raw": 87, "fresh": 42, "after_enrich": 18,
-                   "drop_reasons": { "seen": 23 } }
-}`,
+    response: RENDER_OUT,
     rateLimit: "heavy",
   },
   {
     method: "POST",
-    path: "/api/v1/render/edit",
-    summary: "Re-render with edited articles",
+    path: "/api/v1/actions/render-edit",
+    summary: "Re-render with user-edited articles",
     description:
       "Skip the network fetch — supply your own article list (e.g. user-edited titles, swapped image URLs) and render slides from them. mark_seen is always false on this route.",
+    scope: "write",
     body: `{
   "topic": "f1",
   "design": "newsflash",
@@ -119,15 +185,16 @@ const ENDPOINTS: EndpointDoc[] = [
       "image_url": "...", "description": "..." }
   ]
 }`,
-    response: `(same shape as /render)`,
+    response: RENDER_OUT,
     rateLimit: "heavy",
   },
   {
     method: "POST",
-    path: "/api/v1/render/partial",
+    path: "/api/v1/actions/render-partial",
     summary: "Per-slot re-roll render",
     description:
       "Mix locked and re-rolled slots. Items that are null get a fresh story from the pipeline; non-null items are kept verbatim.",
+    scope: "write",
     body: `{
   "topic": "f1",
   "design": "newsflash",
@@ -137,69 +204,80 @@ const ENDPOINTS: EndpointDoc[] = [
     null
   ]
 }`,
-    response: `(same shape as /render)`,
+    response: RENDER_OUT,
     rateLimit: "heavy",
   },
   {
     method: "POST",
-    path: "/api/v1/jobs",
-    summary: "Submit an async render job",
-    status: "202",
+    path: "/api/v1/actions/preview",
+    summary: "Preview fresh article candidates (no render)",
     description:
-      "Enqueue a render and return immediately with a job_id. Poll GET /api/v1/jobs/{job_id} or pass a webhook_url to be notified on completion. The body mirrors the sync render endpoints, tagged with kind: render | render_edit | render_partial. webhook_url is optional (https-only, SSRF-guarded).",
-    body: `{
-  "kind": "render",
-  "topic": "f1",
-  "design": "newsflash",
-  "webhook_url": "https://my-service.example.com/carousel/done"
-}`,
-    response: `// 202 Accepted
-{
-  "job_id": "9f1c2a...",
-  "kind": "render",
-  "status": "queued",
-  "created_at": 1715000000,
-  "status_url": "https://api.example.com/api/v1/jobs/9f1c2a..."
-}`,
-    rateLimit: "heavy",
+      "Runs the news fetch + freshness + scoring pipeline without rendering slides. Use this to pre-flight a carousel — show candidate stories and let the user pick.",
+    scope: "read",
+    body: `{ "topic": "f1", "limit": 12 }`,
+    response: `{
+  "success": true,
+  "data": {
+    "topic": "f1",
+    "raw": 87,
+    "fresh": 42,
+    "enriched": 18,
+    "candidates": [
+      { "title": "Verstappen wins Monaco GP", "url": "https://...",
+        "source": "f1.com", "image_url": "https://...",
+        "description": "...", "score": 4.7 }
+    ]
   },
+  "meta": { "request_id": "ab12cd34" }
+}`,
+    rateLimit: "light",
+  },
+  // ── Runs ─────────────────────────────────────────────────────────────────
   {
     method: "GET",
-    path: "/api/v1/jobs/{job_id}",
-    summary: "Get async job status & result",
+    path: "/api/v1/runs",
+    summary: "List rendered runs (cursor-paginated)",
     description:
-      "Poll for the job state: queued → running → succeeded | failed. On success, result holds the full RenderOut; on failure, error holds { code, message, details }. A job_id is ephemeral (in-memory, single-instance) — it 404s after a ~1h TTL or a restart. The durable handle is result.run_id (see GET /runs/{run_id}).",
+      "Returns a cursor-paginated list of rendered runs. Newest first. Use ?limit= (1–100, default 20) and ?cursor= for subsequent pages.",
+    scope: "read",
+    query: [
+      { name: "limit", type: "int", required: false, desc: "Page size 1–100 (default 20)" },
+      { name: "cursor", type: "string", required: false, desc: "Opaque cursor from previous page" },
+    ],
     response: `{
-  "job_id": "9f1c2a...",
-  "kind": "render",
-  "status": "succeeded",
-  "created_at": 1715000000,
-  "started_at": 1715000001,
-  "finished_at": 1715000034,
-  "result": { "status": "ok", "run_id": "f1_newsflash_...",
-              "caption": "...", "slides": [ ... ], "articles": [ ... ] },
-  "error": null
+  "success": true,
+  "data": {
+    "items": [
+      { "run_id": "f1_newsflash_1715000000_a1b2c3", "topic": "f1",
+        "design": "newsflash", "created_at": 1715000000,
+        "slide_count": 5, "caption": "F1 News · ..." }
+    ],
+    "next_cursor": "eyJ0IjoxNzE1MDAwMDAwfQ"
+  },
+  "meta": { "request_id": "ab12cd34" }
 }`,
     rateLimit: "light",
   },
   {
     method: "GET",
     path: "/api/v1/runs/{run_id}",
-    summary: "Re-fetch a finished run",
+    summary: "Fetch a previously rendered run",
     description:
-      "Reconstruct a previously rendered run from disk: caption, articles and absolute slide URLs. Durable counterpart to a job — keeps working across restarts and after the job is evicted. Degrades to slides-only for very old runs that predate run.json. Pass ?topic=... if a slug with underscores can't be recovered from run_id.",
+      "Reconstruct a previously rendered run from disk: caption, articles, and absolute slide URLs. Durable counterpart to a job — stays readable across restarts and after the job is evicted. Pass ?topic= if the slug can't be recovered from run_id.",
+    scope: "read",
     query: [
       { name: "topic", type: "string", required: false, desc: "Topic slug (only if run_id parsing is ambiguous)" },
     ],
-    response: `(same shape as /render — a RenderOut)`,
+    response: RENDER_OUT,
     rateLimit: "light",
   },
   {
     method: "GET",
-    path: "/api/v1/export/{run_id}.zip",
-    summary: "Download a rendered run as a ZIP",
+    path: "/api/v1/runs/{run_id}/export",
+    summary: "Download a run as a ZIP (binary)",
     description:
-      "Returns a ZIP containing slide_*.png, caption.txt, and metadata.json. The topic slug is auto-detected from run_id; pass ?topic=... explicitly if the slug contains underscores.",
+      "Returns a ZIP containing slide_*.png, caption.txt, and metadata.json. Binary — not JSON-enveloped. Pass ?topic= if the slug can't be recovered from run_id.",
+    scope: "read",
     query: [
       { name: "topic", type: "string", required: false, desc: "Topic slug (only if run_id parsing is ambiguous)" },
     ],
@@ -208,24 +286,187 @@ Content-Disposition: attachment; filename="<run_id>.zip"`,
     rateLimit: "heavy",
   },
   {
+    method: "DELETE",
+    path: "/api/v1/runs/{run_id}",
+    summary: "Delete a rendered run",
+    description:
+      "Removes the run from the seen-store and deletes its slide files from disk. 404 if the run_id is unknown.",
+    scope: "write",
+    response: `{
+  "success": true,
+  "data": { "run_id": "f1_newsflash_1715000000_a1b2c3", "deleted": true },
+  "meta": { "request_id": "ab12cd34" }
+}`,
+    rateLimit: "light",
+  },
+  // ── Async jobs ───────────────────────────────────────────────────────────
+  {
+    method: "POST",
+    path: "/api/v1/jobs",
+    summary: "Submit an async render job",
+    status: "202",
+    description:
+      "Enqueue a render and return immediately with a job_id. Poll GET /api/v1/jobs/{job_id} or pass a webhook_url (https-only, SSRF-guarded) to be notified on completion. Body mirrors the sync render endpoints, tagged with kind: render | render_edit | render_partial.",
+    scope: "write",
+    body: `{
+  "kind": "render",
+  "topic": "f1",
+  "design": "newsflash",
+  "webhook_url": "https://my-service.example.com/carousel/done"
+}`,
+    response: `// 202 Accepted
+{
+  "success": true,
+  "data": {
+    "job_id": "9f1c2a...",
+    "kind": "render",
+    "status": "queued",
+    "created_at": 1715000000,
+    "started_at": null,
+    "finished_at": null,
+    "status_url": "https://your-app.example.com/api/v1/jobs/9f1c2a...",
+    "result": null,
+    "error": null
+  },
+  "meta": { "request_id": "ab12cd34" }
+}`,
+    rateLimit: "heavy",
+  },
+  {
     method: "GET",
-    path: "/api/v1/health",
-    summary: "Liveness check (no auth)",
-    description: "Always returns ok=true. No X-API-Key required. Use it for uptime monitoring without burning your rate-limit budget.",
-    response: `{ "ok": true, "service": "carousel-studio", "version": "1" }`,
-    rateLimit: "none",
+    path: "/api/v1/jobs",
+    summary: "List async jobs (cursor-paginated)",
+    description:
+      "Returns a cursor-paginated snapshot of in-memory jobs. Newest first. Use ?limit= and ?cursor= for paging.",
+    scope: "read",
+    query: [
+      { name: "limit", type: "int", required: false, desc: "Page size 1–100 (default 20)" },
+      { name: "cursor", type: "string", required: false, desc: "Opaque cursor from previous page" },
+    ],
+    response: `{
+  "success": true,
+  "data": {
+    "items": [ { "job_id": "9f1c2a...", "kind": "render", "status": "succeeded", ... } ],
+    "next_cursor": null
+  },
+  "meta": { "request_id": "ab12cd34" }
+}`,
+    rateLimit: "light",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/jobs/{job_id}",
+    summary: "Get async job status & result",
+    description:
+      "Poll for the job state: queued → running → succeeded | failed. On success, result holds the full RenderOut; on failure, error holds {code, message, details}. A job_id is ephemeral (in-memory, single-instance) — it 404s after a ~1h TTL or a restart. The durable handle is result.run_id (see GET /runs/{run_id}).",
+    scope: "read",
+    response: `{
+  "success": true,
+  "data": {
+    "job_id": "9f1c2a...",
+    "kind": "render",
+    "status": "succeeded",
+    "created_at": 1715000000,
+    "started_at": 1715000001,
+    "finished_at": 1715000034,
+    "status_url": "https://your-app.example.com/api/v1/jobs/9f1c2a...",
+    "result": { "status": "ok", "run_id": "f1_newsflash_...",
+                "caption": "...", "slides": [ "..." ], "articles": [ "..." ] },
+    "error": null
+  },
+  "meta": { "request_id": "ab12cd34" }
+}`,
+    rateLimit: "light",
+  },
+  // ── API key management (admin) ────────────────────────────────────────────
+  {
+    method: "POST",
+    path: "/api/v1/api-keys",
+    summary: "Create an API key (raw secret shown once)",
+    status: "201",
+    description:
+      "Create a new scoped key. scopes must be a subset of read/write/admin. The raw csk_... secret is returned once and never stored — only its hash is kept.",
+    scope: "admin",
+    body: `{ "name": "partner_acme", "scopes": ["read", "write"] }`,
+    response: `{
+  "success": true,
+  "data": {
+    "key_id": "k_abc123",
+    "key": "csk_0a1b2c3d4e5f...",
+    "key_prefix": "csk_0a1b",
+    "name": "partner_acme",
+    "scopes": ["read", "write"],
+    "created_at": "2024-05-06T14:00:00Z"
+  },
+  "meta": { "request_id": "ab12cd34" }
+}`,
+    rateLimit: "light",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/api-keys",
+    summary: "List API keys (no raw secrets)",
+    description:
+      "Returns all active keys with metadata. Raw secrets are never included in list responses.",
+    scope: "admin",
+    response: `{
+  "success": true,
+  "data": [
+    { "key_id": "k_abc123", "key_prefix": "csk_0a1b",
+      "name": "partner_acme", "scopes": ["read", "write"],
+      "created_at": "2024-05-06T14:00:00Z" }
+  ],
+  "meta": { "request_id": "ab12cd34" }
+}`,
+    rateLimit: "light",
+  },
+  {
+    method: "GET",
+    path: "/api/v1/api-keys/{key_id}",
+    summary: "Get a single API key",
+    description: "Returns metadata for one key. 404 if unknown.",
+    scope: "admin",
+    response: `{
+  "success": true,
+  "data": { "key_id": "k_abc123", "key_prefix": "csk_0a1b",
+            "name": "partner_acme", "scopes": ["read", "write"],
+            "created_at": "2024-05-06T14:00:00Z" },
+  "meta": { "request_id": "ab12cd34" }
+}`,
+    rateLimit: "light",
+  },
+  {
+    method: "DELETE",
+    path: "/api/v1/api-keys/{key_id}",
+    summary: "Revoke an API key",
+    description:
+      "Permanently revokes a key. Immediately rejects all future requests using it. 404 if unknown.",
+    scope: "admin",
+    response: `{
+  "success": true,
+  "data": { "key_id": "k_abc123", "revoked": true },
+  "meta": { "request_id": "ab12cd34" }
+}`,
+    rateLimit: "light",
   },
 ];
 
 const ERROR_CODES: { code: number; key: string; meaning: string }[] = [
-  { code: 400, key: "bad_request", meaning: "Malformed request (e.g. unknown delivery adapter)." },
   { code: 401, key: "unauthorized", meaning: "Missing or invalid X-API-Key." },
-  { code: 404, key: "not_found", meaning: "Unknown topic, design, run, or job." },
-  { code: 409, key: "conflict / no_articles / no_fresh / no_usable", meaning: "Pipeline couldn't assemble a carousel. See details (diagnostics)." },
-  { code: 422, key: "unprocessable_entity", meaning: "Request body failed validation (bad slug, oversized fields, >20 articles). See details (invalid fields)." },
-  { code: 429, key: "rate_limited", meaning: "Per-key rate limit exceeded. See Retry-After header." },
-  { code: 503, key: "service_unavailable", meaning: "Public API disabled — operator has not set CAROUSEL_API_KEYS." },
+  { code: 403, key: "forbidden", meaning: "Key lacks the required scope (read/write/admin)." },
+  { code: 422, key: "validation_error", meaning: "Body or params failed validation. See details for per-field errors." },
+  { code: 404, key: "not_found", meaning: "Unknown topic, design, run, job, or API key." },
+  { code: 409, key: "conflict", meaning: "Operation can't complete (e.g. no usable articles — see details for pipeline diagnostics)." },
+  { code: 429, key: "rate_limited", meaning: "Per-key rate limit hit. See Retry-After header." },
+  { code: 500, key: "internal_error", meaning: "Unexpected server error. Details in server logs." },
 ];
+
+const SCOPE_COLOR: Record<string, string> = {
+  none: "bg-ink-600/50 text-ink-300",
+  read: "bg-sky-500/15 text-sky-400",
+  write: "bg-emerald-500/15 text-emerald-400",
+  admin: "bg-violet-500/15 text-violet-400",
+};
 
 function CodeBlock({ children, lang }: { children: string; lang?: string }) {
   return (
@@ -263,7 +504,9 @@ function EndpointCard({ ep }: { ep: EndpointDoc }) {
   const methodColor =
     ep.method === "GET"
       ? "bg-accent/15 text-accent"
-      : "bg-emerald-500/15 text-emerald-400";
+      : ep.method === "DELETE"
+        ? "bg-red-500/15 text-red-400"
+        : "bg-emerald-500/15 text-emerald-400";
   return (
     <article id={id} className="scroll-mt-20 mb-8 border border-ink-700/40 rounded-2xl p-5 bg-ink-800/40">
       <header className="flex flex-wrap items-baseline gap-3 mb-3">
@@ -276,6 +519,9 @@ function EndpointCard({ ep }: { ep: EndpointDoc }) {
             {ep.status}
           </span>
         )}
+        <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded ${SCOPE_COLOR[ep.scope]}`}>
+          {ep.scope === "none" ? "no auth" : ep.scope}
+        </span>
         <span className="text-[10px] uppercase tracking-wider text-ink-400 ml-auto">
           {ep.rateLimit === "heavy"
             ? "Heavy tier"
@@ -333,7 +579,7 @@ export default function ApiDocsPage() {
           </Link>
           <div className="flex-1">
             <div className="text-sm font-bold text-ink-100">Carousel Studio API</div>
-            <div className="text-[11px] text-ink-300">Public /api/v1 reference</div>
+            <div className="text-[11px] text-ink-300">Cross-service standard /api/v1 reference</div>
           </div>
           <Link
             to="/"
@@ -348,9 +594,11 @@ export default function ApiDocsPage() {
         <main>
           <h1 className="text-4xl font-bold mb-3">Carousel Studio API</h1>
           <p className="text-ink-300 mb-6 max-w-2xl">
-            Generate TikTok / Instagram-ready news carousels from your own
-            service. Key-authed REST API with sync &amp; async (job + webhook)
-            rendering. Returns PNG slides + a caption you can post directly.
+            A cross-service standard REST API: every service a central orchestrator
+            connects to uses the same <code className="text-accent">X-API-Key</code> header,
+            the same response envelope, the same error-code set, cursor pagination, and
+            scoped keys. Generates TikTok / Instagram-ready news carousels — sync or async
+            — and returns PNG slides + a caption ready to post.
             Building a browser app? Front it with a BFF —{" "}
             <a href="#browser-key-safety" className="text-accent hover:underline">
               never ship the key to the browser
@@ -384,127 +632,221 @@ export default function ApiDocsPage() {
             </a>
           </div>
 
-          <Section id="authentication" title="Authentication">
+          {/* ── Response envelope ─────────────────────────────────────────── */}
+          <Section id="response-envelope" title="Response envelope">
             <p>
-              Every request to <code className="text-accent">/api/v1/*</code> (except{" "}
-              <code className="text-accent">/api/v1/health</code>) must include an{" "}
-              <code className="text-accent">X-API-Key</code> header. Keys are configured
-              by the server operator via the <code>CAROUSEL_API_KEYS</code> environment
-              variable.
+              Every JSON response uses one shape. A central service can pattern-match on{" "}
+              <code className="text-accent">success</code> and branch on{" "}
+              <code className="text-accent">data</code> vs{" "}
+              <code className="text-accent">error</code> without endpoint-specific parsing.
             </p>
-            <CodeBlock lang="bash">{`# On the server (one-time setup)
-export CAROUSEL_API_KEYS="internal:abc123,partner_acme:xyz789"
-
-# In every client request
-curl -H "X-API-Key: abc123" https://your-app.example.com/api/v1/topics`}</CodeBlock>
+            <p className="text-xs font-semibold text-ink-300 uppercase tracking-wider">Success</p>
+            <CodeBlock lang="json">{`{
+  "success": true,
+  "data": <payload>,
+  "meta": { "request_id": "ab12cd34" }
+}`}</CodeBlock>
+            <p className="text-xs font-semibold text-ink-300 uppercase tracking-wider">Error</p>
+            <CodeBlock lang="json">{`{
+  "success": false,
+  "error": {
+    "code": "not_found",
+    "message": "run not found: f1_newsflash_xxx",
+    "details": {}
+  },
+  "meta": { "request_id": "ab12cd34" }
+}`}</CodeBlock>
             <p className="text-xs text-ink-400">
-              If <code>CAROUSEL_API_KEYS</code> is empty, every <code>/api/v1</code>{" "}
-              call returns 503. The legacy non-prefixed routes used by the studio
-              frontend are unaffected by this setting.
+              <code>details</code> is optional — present for{" "}
+              <code>validation_error</code> (per-field errors) and{" "}
+              <code>conflict</code> (pipeline diagnostics). Binary downloads (ZIP export)
+              are the only non-JSON responses.
+            </p>
+            <p>
+              Send an <code className="text-accent">X-Request-ID</code> header to have
+              it echoed back in <code>meta.request_id</code> and used in server logs.
             </p>
           </Section>
 
+          {/* ── Authentication & scopes ───────────────────────────────────── */}
+          <Section id="authentication" title="Authentication &amp; scopes">
+            <p>
+              Send <code className="text-accent">X-API-Key</code> on every request except
+              the public system endpoints (<code>/health</code>, <code>/meta</code>,{" "}
+              <code>/openapi.json</code>). Two kinds of keys:
+            </p>
+            <ul className="list-disc list-inside text-ink-300 space-y-1">
+              <li>
+                <strong className="text-ink-100">Bootstrap keys</strong> — set via{" "}
+                <code>CAROUSEL_API_KEYS=name:key,...</code> in the environment. Full{" "}
+                <strong>admin</strong> scope. Use these to mint scoped consumer keys.
+              </li>
+              <li>
+                <strong className="text-ink-100">Scoped keys</strong> — created via{" "}
+                <code>POST /api/v1/api-keys</code>, stored{" "}
+                <strong>hashed</strong> (raw secret shown once at creation).
+              </li>
+            </ul>
+            <p>
+              Scopes are hierarchical: <strong>admin</strong> &sup; <strong>write</strong>{" "}
+              &sup; <strong>read</strong>.
+            </p>
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="text-left border-b border-ink-700/60">
+                  <th className="py-2 pr-4 font-semibold text-ink-100">Scope</th>
+                  <th className="py-2 font-semibold text-ink-100">Grants</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-ink-700/30">
+                  <td className="py-2 pr-4 font-mono text-sky-400">read</td>
+                  <td className="py-2 text-ink-300">discovery, runs, jobs, preview, auth/verify</td>
+                </tr>
+                <tr className="border-b border-ink-700/30">
+                  <td className="py-2 pr-4 font-mono text-emerald-400">write</td>
+                  <td className="py-2 text-ink-300">everything read + render actions, create jobs, delete runs</td>
+                </tr>
+                <tr className="border-b border-ink-700/30">
+                  <td className="py-2 pr-4 font-mono text-violet-400">admin</td>
+                  <td className="py-2 text-ink-300">everything write + manage API keys</td>
+                </tr>
+              </tbody>
+            </table>
+            <p className="text-xs text-ink-400">
+              A missing/unknown key returns a generic <strong>401</strong> (no disclosure
+              of whether the instance is provisioned). Insufficient scope returns{" "}
+              <strong>403</strong>.
+            </p>
+          </Section>
+
+          {/* ── Pagination ───────────────────────────────────────────────── */}
+          <Section id="pagination" title="Pagination">
+            <p>
+              List endpoints (<code className="text-accent">GET /runs</code>,{" "}
+              <code className="text-accent">GET /jobs</code>) use{" "}
+              <strong>cursor pagination</strong>. The cursor is an opaque token; do not
+              parse or construct it.
+            </p>
+            <CodeBlock lang="bash">{`GET /api/v1/runs?limit=20&cursor=<opaque>`}</CodeBlock>
+            <ul className="list-disc list-inside text-ink-300 space-y-1">
+              <li><code>limit</code> — 1..100 (default 20)</li>
+              <li><code>cursor</code> — omit for the first page; use <code>data.next_cursor</code> from the previous response</li>
+              <li>Loop until <code>data.next_cursor</code> is <code>null</code></li>
+              <li>A malformed cursor returns <code>422 validation_error</code></li>
+            </ul>
+          </Section>
+
+          {/* ── Quickstart ───────────────────────────────────────────────── */}
           <Section id="quickstart" title="Quickstart">
             <p>
-              Recommended flow: submit an <strong>async job</strong>, poll until
-              it finishes, then read the slides. (A render takes 10–40s, so a
-              long-held sync request can hit proxy/Funnel timeouts.) Ready-to-run
-              clients live in{" "}
-              <code className="text-accent">docs/examples/</code> (Python,
-              curl, Node BFF, browser, webhook receiver).
+              Recommended flow: submit an <strong>async job</strong>, poll until it
+              finishes, then read the slides from <code>.data.result</code>. (A render
+              takes 10–40s, so a long-held sync request can hit proxy/Funnel timeouts.)
+              Ready-to-run clients live in{" "}
+              <code className="text-accent">docs/examples/</code> (Python, curl, Node BFF,
+              browser, webhook receiver).
             </p>
-            <CodeBlock lang="curl">{`BASE=https://api.example.com; KEY=your-api-key
+            <CodeBlock lang="bash">{`BASE="https://your-app.example.com/api/v1"; KEY="your-key"
 
-# 1. Discover what you can render
-curl -H "X-API-Key: $KEY" "$BASE/api/v1/topics"
+# Discover (no auth)
+curl -s "$BASE/meta" | jq .data.capabilities
 
-# 2. Submit an async render → returns a job_id
+# Render async (recommended)
 JOB=$(curl -s -H "X-API-Key: $KEY" -H "Content-Type: application/json" \\
   -d '{"kind":"render","topic":"f1","design":"newsflash"}' \\
-  "$BASE/api/v1/jobs" | jq -r .job_id)
+  "$BASE/jobs" | jq -r .data.job_id)
 
-# 3. Poll until status == succeeded | failed
-curl -H "X-API-Key: $KEY" "$BASE/api/v1/jobs/$JOB" | jq
+# Poll — read response from .data
+curl -s -H "X-API-Key: $KEY" "$BASE/jobs/$JOB" | jq .data.status
 
-# 4. Re-fetch any time by run_id (durable; survives restarts)
-curl -H "X-API-Key: $KEY" "$BASE/api/v1/runs/<run_id>" | jq`}</CodeBlock>
+# Or render synchronously
+curl -s -H "X-API-Key: $KEY" -H "Content-Type: application/json" \\
+  -d '{"topic":"f1","design":"newsflash"}' "$BASE/actions/render" | jq .data.run_id
 
-            <CodeBlock lang="javascript">{`const BASE = "https://api.example.com/api/v1";
+# List runs (cursor-paginated) — page data under .data.items
+curl -s -H "X-API-Key: $KEY" "$BASE/runs?limit=10" \\
+  | jq '.data | {n: (.items|length), next: .next_cursor}'`}</CodeBlock>
+
+            <CodeBlock lang="javascript">{`const BASE = "https://your-app.example.com/api/v1";
 const headers = { "X-API-Key": process.env.CAROUSEL_API_KEY,
                   "Content-Type": "application/json" };
 
-// submit
-const job = await fetch(\`\${BASE}/jobs\`, {
+// Submit async job — result lives in .data
+const { data: job } = await fetch(\`\${BASE}/jobs\`, {
   method: "POST",
   headers,
   body: JSON.stringify({ kind: "render", topic: "f1", design: "newsflash" }),
 }).then(r => r.json());
 
-// poll
+// Poll — unwrap envelope each time
 let cur;
 do {
   await new Promise(r => setTimeout(r, 3000));
-  cur = await fetch(\`\${BASE}/jobs/\${job.job_id}\`, { headers }).then(r => r.json());
+  const env = await fetch(\`\${BASE}/jobs/\${job.job_id}\`, { headers }).then(r => r.json());
+  cur = env.data;
 } while (cur.status === "queued" || cur.status === "running");
 
 if (cur.status === "failed") throw new Error(cur.error.message);
-console.log(cur.result.caption, cur.result.slides.map(s => s.url));`}</CodeBlock>
+console.log(cur.result.caption, cur.result.slides.map((s: { url: string }) => s.url));`}</CodeBlock>
 
             <CodeBlock lang="python">{`import os, time, requests
 
-BASE = "https://api.example.com/api/v1"
+BASE = "https://your-app.example.com/api/v1"
 HEADERS = {"X-API-Key": os.environ["CAROUSEL_API_KEY"]}
 
+# Submit — unwrap .data
 job = requests.post(f"{BASE}/jobs", headers=HEADERS,
-                    json={"kind": "render", "topic": "f1", "design": "newsflash"}).json()
+                    json={"kind": "render", "topic": "f1",
+                          "design": "newsflash"}).json()["data"]
 
 while True:
-    cur = requests.get(f"{BASE}/jobs/{job['job_id']}", headers=HEADERS).json()
+    cur = requests.get(f"{BASE}/jobs/{job['job_id']}",
+                       headers=HEADERS).json()["data"]
     if cur["status"] in ("succeeded", "failed"):
         break
     time.sleep(3)
 
 if cur["status"] == "failed":
-    raise RuntimeError(cur["error"])
+    raise RuntimeError(cur["error"]["message"])
 
 run = cur["result"]
 print(run["caption"])
 for slide in run["slides"]:
     print(slide["url"])
 
-# Download the run as a ZIP
-zip_bytes = requests.get(f"{BASE}/export/{run['run_id']}.zip", headers=HEADERS).content
+# Download ZIP (binary — not enveloped)
+zip_bytes = requests.get(
+    f"{BASE}/runs/{run['run_id']}/export", headers=HEADERS).content
 open(f"{run['run_id']}.zip", "wb").write(zip_bytes)`}</CodeBlock>
-            <p className="text-xs text-ink-400">
-              Prefer the sync path for quick scripts? <code>POST /api/v1/render</code>{" "}
-              with the same body minus <code>kind</code> returns the finished
-              result directly — use a client timeout ≥ 60s.
-            </p>
           </Section>
 
+          {/* ── Endpoints ────────────────────────────────────────────────── */}
           <Section id="endpoints" title="Endpoints">
             {ENDPOINTS.map((ep) => (
-              <EndpointCard key={ep.path} ep={ep} />
+              <EndpointCard key={`${ep.method}:${ep.path}`} ep={ep} />
             ))}
           </Section>
 
+          {/* ── Errors ───────────────────────────────────────────────────── */}
           <Section id="errors" title="Errors">
             <p>
-              All <code>/api/v1</code> errors follow a unified envelope:
+              Exactly <strong>7 codes</strong> shared across all services using this
+              standard. Errors always follow the{" "}
+              <a href="#response-envelope" className="text-accent hover:underline">
+                response envelope
+              </a>{" "}
+              with <code>success: false</code> and an{" "}
+              <code className="text-accent">error.code</code> string.
             </p>
             <CodeBlock lang="json">{`{
+  "success": false,
   "error": {
     "code": "rate_limited",
-    "message": "rate limit exceeded: 30 per 1 minute",
-    "request_id": "ab12cd34ef56"
-  }
+    "message": "rate limit exceeded: 30 per 1 minute"
+  },
+  "meta": { "request_id": "ab12cd34" }
 }`}</CodeBlock>
-            <p>
-              For pipeline failures (409), the original diagnostics dictionary is
-              preserved under <code>error.details</code> so you can introspect why
-              the carousel couldn't be assembled (raw count, fresh count,{" "}
-              drop_reasons breakdown).
-            </p>
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr className="text-left border-b border-ink-700/60">
@@ -525,95 +867,90 @@ open(f"{run['run_id']}.zip", "wb").write(zip_bytes)`}</CodeBlock>
             </table>
           </Section>
 
+          {/* ── Rate limits ──────────────────────────────────────────────── */}
           <Section id="rate-limits" title="Rate limits">
             <p>
-              Limits are <strong>per API key</strong>, in-memory, sliding window.
-              Two tiers:
+              Limits are <strong>per API key</strong>, in-memory, sliding window. Two tiers:
             </p>
             <ul className="list-disc list-inside text-ink-300 space-y-1">
               <li>
-                <strong className="text-ink-100">Heavy</strong> — 30 req/min by
-                default. Applies to <code>/render*</code>, <code>/jobs</code>{" "}
-                (submit), <code>/export/*.zip</code>. Configure via{" "}
+                <strong className="text-ink-100">Heavy</strong> — 30 req/min by default.
+                Applies to <code>/actions/render*</code>, <code>POST /jobs</code>,{" "}
+                <code>/runs/{`{id}`}/export</code>. Configure via{" "}
                 <code>CAROUSEL_API_RATE_LIMIT</code>.
               </li>
               <li>
-                <strong className="text-ink-100">Light</strong> — 120 req/min by
-                default. Applies to <code>/topics</code>, <code>/designs</code>,{" "}
-                <code>/preview/articles</code>, <code>/jobs/{`{id}`}</code>,{" "}
-                <code>/runs/{`{id}`}</code>. Configure via{" "}
+                <strong className="text-ink-100">Light</strong> — 120 req/min by default.
+                Applies to discovery, preview, run/job reads. Configure via{" "}
                 <code>CAROUSEL_API_RATE_LIMIT_LIGHT</code>.
               </li>
             </ul>
             <p>
               Exceeded responses come back as <code>429</code> with a{" "}
-              <code>Retry-After</code> header (seconds). Async throughput is also
-              bounded by <code>CAROUSEL_API_JOB_WORKERS</code> (default 2
-              concurrent renders) — enqueue is instant, but only N run at once.
+              <code>Retry-After</code> header (seconds). Async throughput is also bounded
+              by <code>CAROUSEL_API_JOB_WORKERS</code> (default 2 concurrent renders) —
+              enqueue is instant, but only N run at once.
             </p>
           </Section>
 
-          <Section id="request-tracing" title="Request tracing">
-            <p>
-              Every response includes an <code>X-Request-ID</code> header. If you
-              send your own (also via <code>X-Request-ID</code>), it is echoed back
-              and used in server logs and error responses so correlation is one-step.
-            </p>
-          </Section>
-
+          {/* ── Async jobs ───────────────────────────────────────────────── */}
           <Section id="async-jobs" title="Async jobs">
             <p>
-              A render takes <strong>10–40s</strong> (image fetching dominates).
-              Rather than hold an HTTP connection open that long — fragile behind
-              a reverse proxy / Tailscale Funnel — submit a job to{" "}
-              <code>POST /api/v1/jobs</code> and poll, or supply a{" "}
+              A render takes <strong>10–40s</strong> (image fetching dominates). Rather
+              than hold an HTTP connection open that long — fragile behind a reverse proxy
+              / Tailscale Funnel — submit a job to{" "}
+              <code className="text-accent">POST /api/v1/jobs</code> and poll, or supply a{" "}
               <code>webhook_url</code>.
             </p>
-            <CodeBlock lang="text">{`queued ──▶ running ──▶ succeeded   (result: RenderOut)
-                   └──▶ failed      (error: { code, message, details? })`}</CodeBlock>
+            <CodeBlock lang="text">{`queued ──▶ running ──▶ succeeded   (data.result: RenderOut)
+                   └──▶ failed      (data.error: { code, message, details? })`}</CodeBlock>
             <p>
-              Poll <code>status_url</code> every 2–5s. A failed render (e.g. no
-              fresh stories today) ends in <code>failed</code> with the pipeline
-              diagnostics under <code>error.details</code> — the worker never
-              hangs.
+              Poll <code>status_url</code> every 2–5s. A failed render (e.g. no fresh
+              stories today) ends in <code>failed</code> with the pipeline diagnostics
+              under <code>error.details</code> — the worker never hangs.
             </p>
             <div className="border border-amber-500/30 bg-amber-500/5 rounded-xl p-4">
               <p className="text-amber-300 font-medium text-xs mb-1">
                 Durability — read this
               </p>
               <p className="text-xs text-ink-300">
-                The job store is <strong>in-process and single-instance</strong>:
-                a <code>job_id</code> is ephemeral. It is evicted ~1h after
-                completion (<code>CAROUSEL_API_JOB_TTL</code>) and dropped on a
-                restart/redeploy. The durable handle is <code>run_id</code> —
-                once a render succeeds, its slides + caption persist on disk and
-                stay readable via <code>GET /api/v1/runs/{`{run_id}`}</code> even
+                The job store is <strong>in-process and single-instance</strong>: a{" "}
+                <code>job_id</code> is ephemeral. It is evicted ~1h after completion
+                (<code>CAROUSEL_API_JOB_TTL</code>) and dropped on a restart/redeploy. The
+                durable handle is <code>run_id</code> — once a render succeeds, its slides
+                + caption persist on disk and stay readable via{" "}
+                <code className="text-accent">GET /api/v1/runs/{`{run_id}`}</code> even
                 after the job is gone. Persist the <code>run_id</code> and treat a{" "}
-                <code>404</code> on a <code>job_id</code> as "poll the run
-                instead." Submitting the same render twice is not deduplicated.
+                <code>404</code> on a <code>job_id</code> as "poll the run instead."
               </p>
             </div>
           </Section>
 
+          {/* ── Webhooks ─────────────────────────────────────────────────── */}
           <Section id="webhooks" title="Webhooks">
             <p>
-              Pass <code>webhook_url</code> on <code>POST /api/v1/jobs</code> and
-              the server POSTs the result when the job reaches a terminal state —{" "}
-              <strong>on both succeeded and failed</strong>:
+              Pass <code className="text-accent">webhook_url</code> on{" "}
+              <code>POST /api/v1/jobs</code> and the server POSTs the completed{" "}
+              <strong>envelope</strong> when the job reaches a terminal state — on both
+              succeeded and failed:
             </p>
             <CodeBlock lang="json">{`{
-  "job_id": "9f1c2a...",
-  "kind": "render",
-  "status": "succeeded",
-  "result": { "...RenderOut, or null on failure..." },
-  "error": null,
-  "finished_at": 1715000034
+  "success": true,
+  "data": {
+    "job_id": "9f1c2a...",
+    "kind": "render",
+    "status": "succeeded",
+    "finished_at": 1715000034,
+    "result": { "...RenderOut..." },
+    "error": null
+  },
+  "meta": { "request_id": "ab12cd34" }
 }`}</CodeBlock>
             <p>
-              When the operator sets <code>CAROUSEL_WEBHOOK_SECRET</code>, each
-              delivery carries an <code>X-Carousel-Signature: sha256=&lt;hex&gt;</code>{" "}
-              header — an HMAC-SHA256 of the raw body. Verify it before trusting
-              the payload:
+              When the operator sets <code>CAROUSEL_WEBHOOK_SECRET</code>, each delivery
+              carries an{" "}
+              <code>X-Carousel-Signature: sha256=&lt;hex&gt;</code> header — an HMAC-SHA256
+              of the raw body. Verify it before trusting the payload:
             </p>
             <CodeBlock lang="python">{`import hashlib, hmac
 
@@ -621,37 +958,58 @@ def verify(raw_body: bytes, header: str, secret: str) -> bool:
     expected = "sha256=" + hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, header or "")`}</CodeBlock>
             <p className="text-xs text-ink-400">
-              Delivery is best-effort: 5s timeout, no redirects, one retry. Your
-              receiver should be idempotent and return 2xx quickly.{" "}
+              Delivery is best-effort: 5s timeout, no redirects, one retry. Your receiver
+              should be idempotent and return 2xx quickly.{" "}
               <strong>SSRF rules:</strong> <code>webhook_url</code> must be{" "}
-              <code>https://</code> and resolve to a public IP — loopback,
-              RFC1918, link-local and the CGNAT/Tailscale{" "}
-              <code>100.64.0.0/10</code> range are rejected before the POST
-              (best-effort — re-resolution at connect time means a DNS-rebinding
-              caller could bypass it; gate untrusted callers with{" "}
-              <code>CAROUSEL_WEBHOOK_ALLOW_HOSTS</code> + network egress controls).
-              The operator can allow a private receiver via{" "}
+              <code>https://</code> and resolve to a public IP — loopback, RFC1918,
+              link-local and the CGNAT/Tailscale <code>100.64.0.0/10</code> range are
+              rejected before the POST. The operator can allow a private receiver via{" "}
               <code>CAROUSEL_WEBHOOK_ALLOW_HOSTS</code>.
             </p>
           </Section>
 
-          <Section id="browser-key-safety" title="Browsers & key safety">
+          {/* ── API key management ───────────────────────────────────────── */}
+          <Section id="api-key-management" title="API key management">
+            <p>
+              Admin-only. The raw secret (<code>csk_...</code>) is returned{" "}
+              <strong>once</strong> at creation; only its hash is stored. Provision the
+              first key by bootstrapping via environment, then use it to mint scoped keys:
+            </p>
+            <CodeBlock lang="bash">{`# Bootstrap: set an admin key in the environment
+export CAROUSEL_API_KEYS="admin:$(openssl rand -hex 24)"
+
+# Create a read+write consumer key
+curl -s -H "X-API-Key: $ADMIN" -H "Content-Type: application/json" \\
+  -d '{"name":"partner_acme","scopes":["read","write"]}' \\
+  "$BASE/api-keys" | jq .data    # -> { key_id, key: "csk_...", scopes, ... }
+
+# List all keys (no raw secrets)
+curl -s -H "X-API-Key: $ADMIN" "$BASE/api-keys" | jq .data
+
+# Revoke a key
+curl -s -X DELETE -H "X-API-Key: $ADMIN" "$BASE/api-keys/<key_id>" | jq .data`}</CodeBlock>
+            <p className="text-xs text-ink-400">
+              Rotate a key: add a new key, hand it over, then revoke the old one. Keys are
+              never logged — only the key <em>name</em> appears in access logs.
+            </p>
+          </Section>
+
+          {/* ── Browsers & key safety ────────────────────────────────────── */}
+          <Section id="browser-key-safety" title="Browsers &amp; key safety">
             <p>
               Building a <strong>browser frontend</strong> on top of this API?{" "}
               <strong className="text-ink-100">
                 Never put the API key in browser JavaScript
               </strong>{" "}
-              — anyone can read it. Use a Backend-for-Frontend (BFF): your own
-              server holds the key and proxies calls; the browser talks only to
-              your server.
+              — anyone can read it. Use a Backend-for-Frontend (BFF): your own server
+              holds the key and proxies calls; the browser talks only to your server.
             </p>
             <CodeBlock lang="text">{`Browser ──(no key)──▶ Your backend ──(X-API-Key)──▶ Carousel /api/v1`}</CodeBlock>
             <p className="text-xs text-ink-400">
-              <code>CAROUSEL_API_CORS</code> defaults to <code>*</code> (the
-              typical caller is server-to-server). Listing browser origins there
-              is only for a trusted same-origin admin tool — it is not a green
-              light for key-in-browser. See{" "}
-              <code>docs/examples/bff_proxy.mjs</code> +{" "}
+              <code>CAROUSEL_API_CORS</code> defaults to <code>*</code> (the typical
+              caller is server-to-server). Listing browser origins there is only for a
+              trusted same-origin admin tool — it is not a green light for key-in-browser.
+              See <code>docs/examples/bff_proxy.mjs</code> +{" "}
               <code>browser.ts</code> for a working pair.
             </p>
           </Section>
@@ -663,15 +1021,17 @@ def verify(raw_body: bytes, header: str, secret: str) -> bool:
               On this page
             </div>
             {[
-              ["authentication", "Authentication"],
+              ["response-envelope", "Response envelope"],
+              ["authentication", "Auth & scopes"],
+              ["pagination", "Pagination"],
               ["quickstart", "Quickstart"],
               ["endpoints", "Endpoints"],
-              ["async-jobs", "Async jobs"],
-              ["webhooks", "Webhooks"],
-              ["browser-key-safety", "Browsers & keys"],
               ["errors", "Errors"],
               ["rate-limits", "Rate limits"],
-              ["request-tracing", "Request tracing"],
+              ["async-jobs", "Async jobs"],
+              ["webhooks", "Webhooks"],
+              ["api-key-management", "API key mgmt"],
+              ["browser-key-safety", "Browsers & keys"],
             ].map(([id, label]) => (
               <a
                 key={id}

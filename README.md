@@ -80,23 +80,48 @@ frontend/
 | V   | Toggle strip ↔ grid view                              |
 | Esc | Close any open modal                                  |
 
-## Public API
+## External API
 
-External services can drive Carousel Studio via the versioned, key-authed
-`/api/v1/*` REST surface. Set `CAROUSEL_API_KEYS=...` and you get:
+Carousel Studio exposes a versioned, key-authed REST API under `/api/v1` built
+to a **cross-service standard** so a central service can connect to it the same
+way it connects to every other service.
 
-- **Discovery** — `/api/v1/topics`, `/api/v1/designs`, `/api/v1/preview/articles`
-- **Render (sync)** — `/api/v1/render`, `/api/v1/render/edit`, `/api/v1/render/partial`
-- **Render (async)** — `POST /api/v1/jobs` → `202` + `job_id`, poll
-  `GET /api/v1/jobs/{job_id}`, or get a signed `webhook_url` callback
-- **Results** — `GET /api/v1/runs/{run_id}` (caption + slides), `GET /api/v1/export/{run_id}.zip`
+**Base URL** `https://your-app.example.com/api/v1` · **Auth** `X-API-Key: <key>`
 
-A full render takes 10–40 s, so prefer the **async jobs** flow behind a
-proxy / Tailscale Funnel — the sync endpoints can hit gateway timeouts.
+**Envelope** — every JSON response is wrapped:
 
-Full spec, quickstart and client examples: **[docs/API.md](docs/API.md)** ·
-[docs/examples/](docs/examples/). Interactive docs: visit `/api-docs`
-(custom reference) or `/api/v1/docs` (Swagger UI) on the running app.
+```jsonc
+// success
+{ "success": true, "data": <payload>, "meta": { "request_id": "ab12cd34" } }
+// error
+{ "success": false, "error": { "code": "not_found", "message": "..." }, "meta": { "request_id": "ab12cd34" } }
+```
+
+**Surface** — system (`/health`, `/meta`, `/openapi.json`, `/auth/verify`),
+resources (`/topics`, `/designs`, `/runs`, `/jobs`, `/api-keys`), actions
+(`POST /actions/{render|render-edit|render-partial|preview}`). Lists use
+`?limit=&cursor=` pagination. Error codes: `unauthorized`, `forbidden`,
+`validation_error`, `not_found`, `conflict`, `rate_limited`, `internal_error`.
+
+**Keys & scopes** — set `CAROUSEL_API_KEYS=admin:<secret>` (bootstrap admin),
+then mint hashed, scoped keys (`read` / `write` / `admin`) via
+`POST /api/v1/api-keys` (raw secret shown once).
+
+```bash
+BASE=https://your-app.example.com/api/v1
+# discover (no auth)
+curl -s "$BASE/meta" | jq .data.capabilities
+# render
+curl -s -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"topic":"f1","design":"newsflash"}' "$BASE/actions/render" | jq .data.run_id
+# error example
+curl -s "$BASE/topics"
+# {"success":false,"error":{"code":"unauthorized","message":"invalid or missing API key"},"meta":{...}}
+```
+
+Full spec, quickstart, key management and client examples:
+**[docs/API.md](docs/API.md)** · [docs/examples/](docs/examples/). Interactive
+docs: `/api-docs` (in-app reference) or `/api/v1/docs` (Swagger UI).
 
 ## Run it
 

@@ -18,12 +18,22 @@ const KEY = process.env.CAROUSEL_KEY || "";
 const PORT = Number(process.env.PORT || 8787);
 
 // Only allow the endpoints your frontend actually needs.
+// All responses use the envelope {success, data, meta} — the browser client
+// must read .data to reach the payload (see browser.ts).
 const ALLOW = [
-  { method: "GET", re: /^\/api\/v1\/topics$/ },
-  { method: "GET", re: /^\/api\/v1\/designs$/ },
+  { method: "GET",  re: /^\/api\/v1\/meta$/ },
+  { method: "GET",  re: /^\/api\/v1\/topics$/ },
+  { method: "GET",  re: /^\/api\/v1\/topics\/[\w-]+$/ },
+  { method: "GET",  re: /^\/api\/v1\/designs$/ },
+  { method: "GET",  re: /^\/api\/v1\/designs\/[\w-]+$/ },
+  { method: "POST", re: /^\/api\/v1\/actions\/render$/ },
+  { method: "POST", re: /^\/api\/v1\/actions\/render-edit$/ },
+  { method: "POST", re: /^\/api\/v1\/actions\/render-partial$/ },
+  { method: "POST", re: /^\/api\/v1\/actions\/preview$/ },
   { method: "POST", re: /^\/api\/v1\/jobs$/ },
-  { method: "GET", re: /^\/api\/v1\/jobs\/[\w-]+$/ },
-  { method: "GET", re: /^\/api\/v1\/runs\/[\w.-]+$/ },
+  { method: "GET",  re: /^\/api\/v1\/jobs\/[\w-]+$/ },
+  { method: "GET",  re: /^\/api\/v1\/runs$/ },
+  { method: "GET",  re: /^\/api\/v1\/runs\/[\w.-]+$/ },
 ];
 
 function allowed(method, path) {
@@ -54,4 +64,4 @@ const server = http.createServer(async (req, res) => {
   res.end(text);
 });
 
-server.listen(PORT, () => console.log(`BFF proxy on :${PORT} → ${BASE}`));
+server.listen(PORT, () => console.log(`BFF proxy on :${PORT} -> ${BASE}`));

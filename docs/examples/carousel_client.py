@@ -31,6 +31,7 @@ class CarouselError(RuntimeError):
     def __init__(self, status: int, payload: Any):
         self.status = status
         self.payload = payload
+        # New envelope: {success:false, error:{code,message,...}, meta:{...}}
         err = payload.get("error", payload) if isinstance(payload, dict) else payload
         super().__init__(f"HTTP {status}: {err}")
 
@@ -52,7 +53,12 @@ class CarouselClient:
             except ValueError:
                 payload = r.text
             raise CarouselError(r.status_code, payload)
-        return r.json() if r.content else None
+        resp = r.json() if r.content else None
+        # Every JSON response is enveloped: {success, data, meta}.
+        # Unwrap so callers always receive the inner payload.
+        if isinstance(resp, dict) and "data" in resp:
+            return resp["data"]
+        return resp
 
     # ── discovery ────────────────────────────────────────────────────────
     def list_topics(self) -> list[dict]:
@@ -62,20 +68,20 @@ class CarouselClient:
         return self._request("GET", "/api/v1/designs")
 
     def preview(self, topic: str, limit: int = 12) -> dict:
-        return self._request("GET", "/api/v1/preview/articles",
-                             params={"topic": topic, "limit": limit})
+        return self._request("POST", "/api/v1/actions/preview",
+                             json={"topic": topic, "limit": limit})
 
     # ── render (synchronous) ─────────────────────────────────────────────
     def render(self, topic: str, design: str, **opts) -> dict:
         """Blocking render. Use a long timeout — a run takes 10–40 s."""
         body = {"topic": topic, "design": design, **opts}
-        return self._request("POST", "/api/v1/render", json=body, timeout=90)
+        return self._request("POST", "/api/v1/actions/render", json=body, timeout=90)
 
     # ── render (asynchronous) ────────────────────────────────────────────
     def submit_job(self, kind: str, *, webhook_url: Optional[str] = None,
                    **fields) -> dict:
         """Enqueue an async render. `kind` is render | render_edit | render_partial.
-        Returns the 202 JobOut with a `job_id`."""
+        Returns the 202 JobOut (envelope unwrapped) with a `job_id`."""
         body: dict[str, Any] = {"kind": kind, **fields}
         if webhook_url:
             body["webhook_url"] = webhook_url
@@ -87,7 +93,7 @@ class CarouselClient:
     def wait_for_job(self, job_id: str, *, interval: float = 3.0,
                      timeout: float = 180.0) -> dict:
         """Poll until the job reaches a terminal state. Returns the final
-        JobOut. Raises CarouselError if the render failed."""
+        JobOut (envelope unwrapped). Raises CarouselError if the render failed."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             job = self.get_job(job_id)
@@ -108,9 +114,17 @@ class CarouselClient:
         params = {"topic": topic} if topic else None
         return self._request("GET", f"/api/v1/runs/{run_id}", params=params)
 
+    def list_runs(self, *, limit: int = 20, cursor: Optional[str] = None) -> dict:
+        """Fetch one page of runs. Returns {items, next_cursor}. Loop until
+        next_cursor is None to page through all runs."""
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        return self._request("GET", "/api/v1/runs", params=params)
+
     def export_zip(self, run_id: str, dest: str, topic: Optional[str] = None) -> str:
         params = {"topic": topic} if topic else None
-        r = self._s.get(f"{self.base}/api/v1/export/{run_id}.zip",
+        r = self._s.get(f"{self.base}/api/v1/runs/{run_id}/export",
                         params=params, timeout=60)
         if r.status_code >= 400:
             try:
@@ -121,6 +135,13 @@ class CarouselClient:
         with open(dest, "wb") as f:
             f.write(r.content)
         return dest
+
+    # ── admin ────────────────────────────────────────────────────────────
+    def create_key(self, name: str, scopes: list[str]) -> dict:
+        """Create a new scoped API key (admin scope required).
+        The raw secret is returned once in the response as `key`."""
+        return self._request("POST", "/api/v1/api-keys",
+                             json={"name": name, "scopes": scopes})
 
 
 if __name__ == "__main__":
@@ -133,9 +154,9 @@ if __name__ == "__main__":
 
     client = CarouselClient(base, key)
     print("topics:", [t["slug"] for t in client.list_topics()])
-    print(f"rendering {topic}/{design} (async)…")
+    print(f"rendering {topic}/{design} (async)...")
     run = client.render_and_wait(topic, design)
     print("run_id:", run["run_id"])
-    print("caption:", run["caption"][:120], "…")
+    print("caption:", run["caption"][:120], "...")
     for s in run["slides"]:
         print(" ", s["url"])

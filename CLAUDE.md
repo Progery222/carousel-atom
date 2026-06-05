@@ -87,7 +87,14 @@ FastAPI routes most worth knowing:
 
 Static mount: `/output/...` serves rendered slides from `backend/data/output/`.
 
-**Public API (`backend/api/v1.py`).** A versioned, key-authed (`X-API-Key`) surface under `/api/v1` for external consumers: discovery, sync render (`/render*`), **async render** (`POST /jobs` → `202` + `job_id`, poll `GET /jobs/{job_id}`, optional SSRF-guarded HMAC-signed webhook — see `backend/api/jobs.py`), result re-fetch (`GET /runs/{run_id}`), ZIP export. Auth in `auth.py`, rate-limit tiers in `rate_limit.py`, unified error envelope + `RequestValidationError` handler in `server.py` (scoped to `/api/v1` only — internal routes keep `{detail}`). On a successful render the impl layer (`server._persist_run`) writes a `run.json` sidecar next to the slides (caption + articles that `run_once` keeps only in memory) so `/runs/{run_id}` and the ZIP caption survive the request. The job store is **in-process / single-instance** (ephemeral `job_id`; durable handle is `run_id`). Full docs: `docs/API.md`, examples in `docs/examples/`.
+**External API (`backend/api/v1.py`).** A versioned, key-authed (`X-API-Key`) `/api/v1` surface built to a **cross-service standard** (so a central service connects to every service identically). Conventions:
+- **Envelope** — every JSON response is `{success, data, meta:{request_id}}` (errors `{success:false, error:{code,message,details?}, meta}`). Wrapped via `api.responses.ok()` + `Envelope[T]` response models (so OpenAPI is truthful); error envelopes come from the handlers in `server.py` (scoped to `/api/v1`; internal `/` routes keep `{detail}`). A global `Exception` handler returns `internal_error` so no /api/v1 500 is non-JSON.
+- **Error codes** — exactly: `unauthorized`(401), `forbidden`(403), `validation_error`(422), `not_found`(404), `conflict`(409), `rate_limited`(429), `internal_error`(500).
+- **Auth & scopes** — `CAROUSEL_API_KEYS` env = bootstrap **admin** keys; DB-hashed scoped keys (`core/api_keys.py`, sha256 + optional `CAROUSEL_KEY_PEPPER`) created via `POST /api/v1/api-keys` (raw shown once). Scopes `admin ⊃ write ⊃ read` enforced by `auth.require_scope`. `auth.auth_dependency` attaches the key to `request.state.api_key` (rate limiter + access log + job attribution read `.name`).
+- **Surface** — system (`/health`,`/meta`,`/openapi.json`,`/auth/verify`), resources (`/topics`,`/designs`,`/runs`,`/jobs`,`/api-keys`), actions (`POST /actions/{render|render-edit|render-partial|preview}`). Lists use `?limit=&cursor=` keyset pagination (`api.responses` + `dedup.list_runs` / `JobStore.list`). Async render: `POST /jobs` → `202` + `job_id`, poll `GET /jobs/{id}`, SSRF-guarded HMAC webhook (`api/jobs.py`).
+- **Persistence** — `server._persist_run` writes a `run.json` sidecar **and** indexes the run via `dedup.record_run` (the `runs` table powers `GET /runs` pagination). The job store is in-process/single-instance (ephemeral `job_id`; durable handle `run_id`).
+
+Full docs: `docs/API.md`, examples in `docs/examples/`.
 
 ### Frontend state machine (`frontend/src/App.tsx`)
 
