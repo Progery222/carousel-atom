@@ -566,6 +566,8 @@ export default function ApiDocsPage() {
   const swaggerHref = `${API_BASE}/api/v1/docs`;
   const openapiHref = `${API_BASE}/api/v1/openapi.json`;
   const redocHref = `${API_BASE}/api/v1/redoc`;
+  const repoHref = "https://github.com/Progery222/carousel-atom";
+  const examplesHref = `${repoHref}/tree/main/docs/examples`;
 
   return (
     <div className="min-h-screen bg-ink-900 text-ink-100">
@@ -744,8 +746,15 @@ export default function ApiDocsPage() {
               finishes, then read the slides from <code>.data.result</code>. (A render
               takes 10–40s, so a long-held sync request can hit proxy/Funnel timeouts.)
               Ready-to-run clients live in{" "}
-              <code className="text-accent">docs/examples/</code> (Python, curl, Node BFF,
-              browser, webhook receiver).
+              <a
+                href={examplesHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent hover:underline"
+              >
+                docs/examples/
+              </a>{" "}
+              (Python, curl, Node BFF, browser, webhook receiver).
             </p>
             <CodeBlock lang="bash">{`BASE="https://your-app.example.com/api/v1"; KEY="your-key"
 
@@ -970,6 +979,15 @@ def verify(raw_body: bytes, header: str, secret: str) -> bool:
 
           {/* ── API key management ───────────────────────────────────────── */}
           <Section id="api-key-management" title="API key management">
+            <p className="text-sm text-ink-300 border-l-2 border-accent/60 pl-3">
+              <strong className="text-ink-100">
+                Integrating against an instance you don&apos;t operate?
+              </strong>{" "}
+              You don&apos;t mint your own key — request a scoped key from whoever runs
+              that instance. They create it with the admin flow below and hand you the{" "}
+              <code className="text-accent">csk_…</code> secret (shown once). Everything
+              else in this section is for the operator.
+            </p>
             <p>
               Admin-only. The raw secret (<code>csk_...</code>) is returned{" "}
               <strong>once</strong> at creation; only its hash is stored. Provision the
@@ -1009,8 +1027,25 @@ curl -s -X DELETE -H "X-API-Key: $ADMIN" "$BASE/api-keys/<key_id>" | jq .data`}<
               <code>CAROUSEL_API_CORS</code> defaults to <code>*</code> (the typical
               caller is server-to-server). Listing browser origins there is only for a
               trusted same-origin admin tool — it is not a green light for key-in-browser.
-              See <code>docs/examples/bff_proxy.mjs</code> +{" "}
-              <code>browser.ts</code> for a working pair.
+              See{" "}
+              <a
+                href={`${examplesHref}/bff_proxy.mjs`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent hover:underline"
+              >
+                bff_proxy.mjs
+              </a>{" "}
+              +{" "}
+              <a
+                href={`${examplesHref}/browser.ts`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent hover:underline"
+              >
+                browser.ts
+              </a>{" "}
+              for a working pair.
             </p>
           </Section>
         </main>

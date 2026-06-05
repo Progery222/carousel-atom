@@ -181,8 +181,12 @@ browser, webhook receiver).
 Admin-only. The raw secret is returned **once** at creation; only its hash is
 stored.
 
+**Consuming an instance you don't run?** You don't create your own key — request a
+scoped key from the operator of that instance. They mint it via the flow below and
+hand you the `csk_...` secret (shown once); the rest of this section is for them.
+
 ```bash
-# create a read+write key
+# create a read+write key  → 201 Created
 curl -s -H "X-API-Key: $ADMIN" -H 'Content-Type: application/json' \
   -d '{"name":"partner_acme","scopes":["read","write"]}' \
   "$BASE/api-keys" | jq .data        # -> { key_id, key: "csk_...", scopes, ... }
