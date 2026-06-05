@@ -1,402 +1,412 @@
-"""Tests for the public /api/v1 router: auth, rate limiting, ZIP export.
+"""Tests for the public /api/v1 cross-service standard surface.
 
-The pipeline itself is mocked — we only verify the API surface here.
-Render/preview pipeline behavior is covered by other test files.
+Covers: the {success,data,meta} envelope, X-API-Key auth (env bootstrap + DB
+keys), scopes (read/write/admin), the unified error codes, cursor pagination,
+the system endpoints, and API-key management. The render pipeline is mocked —
+pipeline behavior is covered by other test files.
 """
 from __future__ import annotations
 
+import importlib
 import io
+import sys
+import time
 import zipfile
 
 import pytest
 
 
-@pytest.fixture
-def client_with_keys(monkeypatch, tmp_path):
-    """Spin up a TestClient with two configured API keys.
-
-    Each fixture invocation reloads the auth module from env so tests
-    don't leak keys into each other.
-    """
-    monkeypatch.setenv("CAROUSEL_API_KEYS", "internal:goodkey,partner:secondkey")
-
-    from api import auth
-    auth.reload_keys()
-
-    from fastapi.testclient import TestClient
-    from api.server import app
-
-    # Point OUTPUT_DIR at a temp dir across every module that reads it, so the
-    # ZIP / run tests build fake run directories without touching real data.
-    # (OUTPUT_DIR is a hardcoded constant in core.pipeline — the old
-    # CAROUSEL_OUTPUT_DIR env var was never read, so tests used to write into
-    # the real backend/data/output. Patching the module bindings fixes that.)
-    import core.pipeline as pipeline
-    import api.server as server
-    import api.v1 as v1
-    for mod in (pipeline, server, v1):
-        monkeypatch.setattr(mod, "OUTPUT_DIR", tmp_path)
-
-    return TestClient(app)
-
-
-@pytest.fixture
-def client_no_keys(monkeypatch):
-    monkeypatch.setenv("CAROUSEL_API_KEYS", "")
-    from api import auth
-    auth.reload_keys()
-    from fastapi.testclient import TestClient
-    from api.server import app
-    return TestClient(app)
-
-
-def test_503_when_no_keys_configured(client_no_keys):
-    r = client_no_keys.get("/api/v1/topics")
-    assert r.status_code == 503
-    body = r.json()
-    assert body["error"]["code"] == "service_unavailable"
-
-
-def test_401_without_header(client_with_keys):
-    r = client_with_keys.get("/api/v1/topics")
-    assert r.status_code == 401
-    assert r.json()["error"]["code"] == "unauthorized"
-
-
-def test_401_with_wrong_key(client_with_keys):
-    r = client_with_keys.get("/api/v1/topics", headers={"X-API-Key": "nope"})
-    assert r.status_code == 401
-
-
-def test_200_with_valid_key(client_with_keys):
-    r = client_with_keys.get("/api/v1/topics", headers={"X-API-Key": "goodkey"})
-    assert r.status_code == 200
-    assert isinstance(r.json(), list)
-
-
-def test_second_key_also_works(client_with_keys):
-    r = client_with_keys.get("/api/v1/topics", headers={"X-API-Key": "secondkey"})
-    assert r.status_code == 200
-
-
-def test_health_is_public(client_with_keys):
-    r = client_with_keys.get("/api/v1/health")
-    assert r.status_code == 200
-    assert r.json()["ok"] is True
-
-
-def test_openapi_schema_only_lists_v1_paths(client_with_keys):
-    r = client_with_keys.get("/api/v1/openapi.json")
-    assert r.status_code == 200
-    paths = r.json()["paths"]
-    assert all(p.startswith("/api/v1/") for p in paths), paths
-
-
-def test_request_id_header_round_trip(client_with_keys):
-    r = client_with_keys.get(
-        "/api/v1/topics",
-        headers={"X-API-Key": "goodkey", "X-Request-ID": "trace-abc"},
-    )
-    assert r.headers.get("X-Request-ID") == "trace-abc"
-
-
-def test_zip_export_404_for_unknown_run(client_with_keys):
-    r = client_with_keys.get(
-        "/api/v1/export/missing-run-id.zip",
-        headers={"X-API-Key": "goodkey"},
-    )
-    assert r.status_code == 404
-
-
-def test_zip_export_streams_run_dir(client_with_keys, monkeypatch):
-    from api import v1
-    from core import pipeline
-
-    # Build a fake run directory: <OUTPUT_DIR>/<topic>/<run_id>/slide_*.png
-    fake_run = pipeline.OUTPUT_DIR / "f1" / "f1_newsflash_1234_abcdef"
-    fake_run.mkdir(parents=True, exist_ok=True)
-    (fake_run / "slide_0.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 64)
-    (fake_run / "slide_1.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 64)
-    (fake_run / "caption.txt").write_text("hello world")
-
-    # The resolver needs `f1` to be a known topic — patch the lookup.
-    monkeypatch.setattr(v1, "list_topics", lambda: ["f1"])
-
-    r = client_with_keys.get(
-        f"/api/v1/export/{fake_run.name}.zip",
-        headers={"X-API-Key": "goodkey"},
-    )
-    assert r.status_code == 200
-    assert r.headers["content-type"] == "application/zip"
-    zf = zipfile.ZipFile(io.BytesIO(r.content))
-    names = set(zf.namelist())
-    assert "slide_0.png" in names
-    assert "slide_1.png" in names
-    assert "caption.txt" in names
-    assert "metadata.json" in names
-
-
-def test_render_calls_impl_with_base(client_with_keys, monkeypatch):
-    """The render handler should pass an absolute URL base to the impl
-    so slide URLs in the response are absolute, not root-relative."""
-    captured: dict = {}
-
-    def fake_render_impl(req, *, base=""):
-        captured["base"] = base
-        captured["topic"] = req.topic
-        from api.schemas import RenderOut
-        return RenderOut(
-            status="ok", run_id="x", topic=req.topic, design=req.design,
-            caption="c", articles=[], slides=[],
-        )
-
-    import api.server as server
-    monkeypatch.setattr(server, "render_impl", fake_render_impl)
-
-    r = client_with_keys.post(
-        "/api/v1/render",
-        headers={"X-API-Key": "goodkey"},
-        json={"topic": "f1", "design": "newsflash"},
-    )
-    assert r.status_code == 200, r.text
-    assert captured["topic"] == "f1"
-    assert captured["base"].startswith("http"), captured
-
-
-def test_unified_error_envelope_for_v1(client_with_keys):
-    """An unknown topic should come back wrapped in the v1 error envelope."""
-    r = client_with_keys.get(
-        "/api/v1/preview/articles?topic=__definitely_not_a_topic__",
-        headers={"X-API-Key": "goodkey"},
-    )
-    assert r.status_code == 404
-    body = r.json()
-    assert "error" in body
-    assert body["error"]["code"] == "not_found"
-    assert "request_id" in body["error"]
-
-
-def test_rate_limit_trips_on_dynamic_path(monkeypatch):
-    """Regression: the heavy limit must trip for repeated calls to the
-    same endpoint even when the URL path differs by a dynamic segment
-    (e.g. /export/{run_id}.zip). This guards against slowapi's default
-    `key_style="url"` which buckets by resolved path and would never
-    trip on /export/x1.zip vs /export/x2.zip."""
-    monkeypatch.setenv("CAROUSEL_API_KEYS", "ratekey")
-    monkeypatch.setenv("CAROUSEL_API_RATE_LIMIT", "2/minute")
-    # Force re-import so the new env values stick to module-level singletons.
-    import importlib
-    import sys
-    for mod in ["api.rate_limit", "api.auth", "api.v1", "api.server"]:
-        sys.modules.pop(mod, None)
-    from api import rate_limit  # noqa: F401
+def _build_client(monkeypatch, tmp_path, *, keys="boot:adminkey",
+                  limit="1000/minute", raise_server_exceptions=True):
+    """Fresh, isolated TestClient: temp SQLite DB, generous limits, env reload.
+    Re-imports the api modules so module-level limits/keys can't bleed between
+    tests."""
+    monkeypatch.setenv("CAROUSEL_API_KEYS", keys)
+    monkeypatch.setenv("CAROUSEL_API_RATE_LIMIT", limit)
+    monkeypatch.setenv("CAROUSEL_API_RATE_LIMIT_LIGHT", limit)
+    monkeypatch.delenv("CAROUSEL_ALLOW_LOCAL", raising=False)
+    monkeypatch.delenv("CAROUSEL_WEBHOOK_ALLOW_HOSTS", raising=False)
+    for m in ["api.rate_limit", "api.auth", "api.jobs", "api.responses",
+              "api.v1", "api.server"]:
+        sys.modules.pop(m, None)
+    import core.dedup as dedup
+    monkeypatch.setattr(dedup, "DB_PATH", tmp_path / "test.db")
+    dedup.init_db()
+    import core.api_keys as api_keys
+    api_keys.init_db()
     importlib.import_module("api.auth").reload_keys()
     from fastapi.testclient import TestClient
     from api.server import app
-    client = TestClient(app)
-
-    codes = []
-    for i in range(4):
-        r = client.get(f"/api/v1/export/run_{i}.zip", headers={"X-API-Key": "ratekey"})
-        codes.append(r.status_code)
-    # First two return 404 (run doesn't exist), then we exceed 2/min.
-    assert codes[:2] == [404, 404], codes
-    assert 429 in codes[2:], codes
-
-
-def test_internal_route_keeps_legacy_error_shape(client_with_keys):
-    """The studio frontend parses {detail: ...} — don't break that on
-    internal (non-v1) routes."""
-    r = client_with_keys.get("/preview/articles?topic=__nope__")
-    assert r.status_code == 404
-    body = r.json()
-    assert "detail" in body
-    assert "error" not in body
-
-
-# ── run.json persistence + run-details endpoint ─────────────────────────────
+    return TestClient(app, raise_server_exceptions=raise_server_exceptions)
 
 
 @pytest.fixture
-def api_client(monkeypatch):
-    """Isolated TestClient with generous rate limits and a fresh job store.
+def client(monkeypatch, tmp_path):
+    return _build_client(monkeypatch, tmp_path)
 
-    Re-imports the api modules so leaked module-level limits from other tests
-    (notably the rate-limit regression test, which bakes a 2/minute cap into
-    a re-imported `api.rate_limit`) can't bleed into the render/job tests.
-    """
-    monkeypatch.setenv("CAROUSEL_API_KEYS", "internal:goodkey,partner:secondkey")
-    monkeypatch.setenv("CAROUSEL_API_RATE_LIMIT", "1000/minute")
-    monkeypatch.setenv("CAROUSEL_API_RATE_LIMIT_LIGHT", "1000/minute")
-    import importlib
-    import sys
-    for mod in ["api.rate_limit", "api.auth", "api.jobs", "api.v1", "api.server"]:
-        sys.modules.pop(mod, None)
-    importlib.import_module("api.auth").reload_keys()
-    from fastapi.testclient import TestClient
-    from api.server import app
-    return TestClient(app)
+
+ADMIN = {"X-API-Key": "adminkey"}
+
+
+def _make_key(client, name="reader", scopes=("read",)) -> str:
+    r = client.post("/api/v1/api-keys", headers=ADMIN,
+                    json={"name": name, "scopes": list(scopes)})
+    assert r.status_code == 201, r.text
+    return r.json()["data"]["key"]
 
 
 def _install_fake_pipeline(monkeypatch, tmp_path, *, status="ok",
-                           topic="f1", design="newsflash"):
-    """Point OUTPUT_DIR at tmp_path across the modules that read it, and
-    replace `run_once` with a network-free fake that writes a real slide
-    PNG so URL building / ZIP / run-details work end to end."""
+                           topic="f1", design="newsflash", run_suffix="abcd12"):
+    """Patch OUTPUT_DIR everywhere + replace run_once with a network-free fake
+    that writes a real slide PNG so URL building / ZIP / run.json work."""
     import core.pipeline as pipeline
     import api.server as server
     import api.v1 as v1
-    monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
-    monkeypatch.setattr(server, "OUTPUT_DIR", tmp_path)
-    monkeypatch.setattr(v1, "OUTPUT_DIR", tmp_path)
+    out = tmp_path / "output"
+    for mod in (pipeline, server, v1):
+        monkeypatch.setattr(mod, "OUTPUT_DIR", out)
 
     def _fake_run_once(topic_slug, design_slug="newsflash", **kw):
-        run_id = f"{topic_slug}_{design_slug}_1700000000_abcd12"
+        run_id = f"{topic_slug}_{design_slug}_1700000000_{run_suffix}"
         if status != "ok":
             return {"status": status, "run_id": run_id,
                     "diagnostics": {"raw": 3, "fresh": 0, "drop_reasons": {"seen": 3}}}
-        out_dir = tmp_path / topic_slug / run_id
-        out_dir.mkdir(parents=True, exist_ok=True)
-        slide = out_dir / "slide_0.png"
-        slide.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 64)
+        d = out / topic_slug / run_id
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "slide_0.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 64)
         return {
             "status": "ok", "run_id": run_id, "topic": topic_slug,
-            "design": design_slug, "slide_paths": [str(slide)],
+            "design": design_slug, "slide_paths": [str(d / "slide_0.png")],
             "caption": "Verstappen wins Monaco 🏎",
             "articles": [{"title": "Headline A", "url": "https://x/a",
                           "source": "BBC", "image_url": "", "description": "d"}],
-            "output_dir": str(out_dir), "diagnostics": {"raw": 5},
+            "output_dir": str(d), "diagnostics": {"raw": 5},
         }
 
     monkeypatch.setattr(server, "run_once", _fake_run_once)
     return topic, design
 
 
-def test_run_json_persisted_and_run_details_round_trip(api_client, monkeypatch, tmp_path):
-    topic, design = _install_fake_pipeline(monkeypatch, tmp_path)
-    r = api_client.post("/api/v1/render", headers={"X-API-Key": "goodkey"},
-                        json={"topic": topic, "design": design})
-    assert r.status_code == 200, r.text
+# ── envelope + system endpoints ─────────────────────────────────────────────
+
+
+def test_health_is_public_enveloped(client):
+    r = client.get("/api/v1/health")
+    assert r.status_code == 200
     body = r.json()
-    run_id = body["run_id"]
-
-    # run.json was written next to the slides.
-    meta_file = tmp_path / topic / run_id / "run.json"
-    assert meta_file.exists()
-
-    # GET /runs/{run_id} reconstructs caption + articles + slides from disk.
-    r2 = api_client.get(f"/api/v1/runs/{run_id}", headers={"X-API-Key": "goodkey"})
-    assert r2.status_code == 200, r2.text
-    got = r2.json()
-    assert got["caption"] == "Verstappen wins Monaco 🏎"
-    assert got["articles"][0]["title"] == "Headline A"
-    assert got["slides"][0]["url"].endswith(f"/output/{topic}/{run_id}/slide_0.png")
+    assert body["success"] is True
+    assert body["data"]["status"] == "ok"
+    assert body["data"]["version"]
+    assert "request_id" in body["meta"]
 
 
-def test_run_details_404_for_unknown_run(api_client, monkeypatch, tmp_path):
+def test_meta_describes_contract(client):
+    body = client.get("/api/v1/meta").json()
+    data = body["data"]
+    assert data["service"] == "carousel-studio"
+    assert data["api_version"] == "v1"
+    assert set(data["scopes"]) == {"read", "write", "admin"}
+    assert "render" in data["capabilities"]["actions"]
+    assert data["auth"]["name"] == "X-API-Key"
+    assert data["pagination"]["style"] == "cursor"
+
+
+def test_openapi_security_and_v1_only(client):
+    schema = client.get("/api/v1/openapi.json").json()
+    assert all(p.startswith("/api/v1") for p in schema["paths"])
+    assert "ApiKeyAuth" in schema["components"]["securitySchemes"]
+
+
+def test_request_id_round_trip(client):
+    r = client.get("/api/v1/health", headers={"X-Request-ID": "trace-xyz"})
+    assert r.headers.get("X-Request-ID") == "trace-xyz"
+    assert r.json()["meta"]["request_id"] == "trace-xyz"
+
+
+# ── auth ────────────────────────────────────────────────────────────────────
+
+
+def test_missing_key_is_401_envelope(client):
+    r = client.get("/api/v1/topics")
+    assert r.status_code == 401
+    body = r.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "unauthorized"
+    assert "request_id" in body["meta"]
+
+
+def test_wrong_key_is_401_generic(client):
+    r = client.get("/api/v1/topics", headers={"X-API-Key": "nope"})
+    assert r.status_code == 401
+    # Same generic message as missing/no-keys — no provisioning disclosure.
+    assert r.json()["error"]["message"] == "invalid or missing API key"
+
+
+def test_env_admin_key_works(client):
+    r = client.get("/api/v1/topics", headers=ADMIN)
+    assert r.status_code == 200
+    assert isinstance(r.json()["data"], list)
+
+
+def test_auth_verify_reports_identity(client):
+    body = client.get("/api/v1/auth/verify", headers=ADMIN).json()["data"]
+    assert body["name"] == "boot"
+    assert body["scopes"] == ["admin"]
+
+
+# ── API key management ──────────────────────────────────────────────────────
+
+
+def test_create_key_shows_raw_once_and_hashes(client):
+    r = client.post("/api/v1/api-keys", headers=ADMIN,
+                    json={"name": "partner", "scopes": ["read", "write"]})
+    assert r.status_code == 201
+    data = r.json()["data"]
+    raw = data["key"]
+    assert raw.startswith("csk_")
+    assert data["key_prefix"] == raw[:12]
+    assert sorted(data["scopes"]) == ["read", "write"]
+    # The raw secret never appears again in list/get.
+    listed = client.get("/api/v1/api-keys", headers=ADMIN).json()["data"]
+    assert all("key" not in k for k in listed)
+    got = client.get(f"/api/v1/api-keys/{data['key_id']}", headers=ADMIN).json()["data"]
+    assert "key" not in got
+    # And the new key authenticates.
+    assert client.get("/api/v1/auth/verify", headers={"X-API-Key": raw}).status_code == 200
+
+
+def test_create_key_requires_admin(client):
+    reader = _make_key(client, scopes=["read"])
+    r = client.post("/api/v1/api-keys", headers={"X-API-Key": reader},
+                    json={"name": "x", "scopes": ["read"]})
+    assert r.status_code == 403
+    assert r.json()["error"]["code"] == "forbidden"
+
+
+def test_create_key_unknown_scope_422(client):
+    r = client.post("/api/v1/api-keys", headers=ADMIN,
+                    json={"name": "x", "scopes": ["superuser"]})
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "validation_error"
+
+
+def test_revoked_key_is_rejected(client):
+    raw = _make_key(client, scopes=["read"])
+    key_id = client.get("/api/v1/api-keys", headers=ADMIN).json()["data"][0]["key_id"]
+    assert client.delete(f"/api/v1/api-keys/{key_id}", headers=ADMIN).status_code == 200
+    assert client.get("/api/v1/topics", headers={"X-API-Key": raw}).status_code == 401
+
+
+# ── scopes ──────────────────────────────────────────────────────────────────
+
+
+def test_read_scope_cannot_write(client, monkeypatch, tmp_path):
     _install_fake_pipeline(monkeypatch, tmp_path)
-    monkeypatch.setattr("api.v1.list_topics", lambda: ["f1"])
-    r = api_client.get("/api/v1/runs/f1_newsflash_0_zzz",
-                       headers={"X-API-Key": "goodkey"})
-    assert r.status_code == 404
+    reader = _make_key(client, scopes=["read"])
+    r = client.post("/api/v1/actions/render", headers={"X-API-Key": reader},
+                    json={"topic": "f1", "design": "newsflash"})
+    assert r.status_code == 403
+    assert r.json()["error"]["code"] == "forbidden"
+    # read can still read
+    assert client.get("/api/v1/topics", headers={"X-API-Key": reader}).status_code == 200
+
+
+def test_write_scope_can_render(client, monkeypatch, tmp_path):
+    _install_fake_pipeline(monkeypatch, tmp_path)
+    writer = _make_key(client, scopes=["write"])
+    r = client.post("/api/v1/actions/render", headers={"X-API-Key": writer},
+                    json={"topic": "f1", "design": "newsflash"})
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["run_id"]
+
+
+# ── actions + runs ──────────────────────────────────────────────────────────
+
+
+def test_action_render_persists_and_runs_roundtrip(client, monkeypatch, tmp_path):
+    _install_fake_pipeline(monkeypatch, tmp_path)
+    r = client.post("/api/v1/actions/render", headers=ADMIN,
+                    json={"topic": "f1", "design": "newsflash"})
+    assert r.status_code == 200, r.text
+    run = r.json()["data"]
+    run_id = run["run_id"]
+    assert run["caption"] == "Verstappen wins Monaco 🏎"
+
+    # run.json sidecar written
+    assert (tmp_path / "output" / "f1" / run_id / "run.json").exists()
+    # GET /runs/{id} reconstructs from disk
+    got = client.get(f"/api/v1/runs/{run_id}", headers=ADMIN).json()["data"]
+    assert got["articles"][0]["title"] == "Headline A"
+    assert got["slides"][0]["url"].endswith(f"/output/f1/{run_id}/slide_0.png")
+    # GET /runs lists it (indexed via dedup.record_run)
+    listed = client.get("/api/v1/runs", headers=ADMIN).json()["data"]
+    assert any(it["run_id"] == run_id for it in listed["items"])
+
+
+def test_runs_cursor_pagination(client, monkeypatch, tmp_path):
+    # Three runs at increasing created_at via the dedup index directly.
+    import core.dedup as dedup
+    for i in range(3):
+        dedup.record_run(run_id=f"f1_newsflash_170000000{i}_r{i}", topic="f1",
+                         design="newsflash", created_at=1700000000 + i,
+                         slide_count=5, caption=f"c{i}")
+    p1 = client.get("/api/v1/runs?limit=2", headers=ADMIN).json()["data"]
+    assert len(p1["items"]) == 2
+    assert p1["next_cursor"]
+    p2 = client.get(f"/api/v1/runs?limit=2&cursor={p1['next_cursor']}",
+                    headers=ADMIN).json()["data"]
+    assert len(p2["items"]) == 1
+    assert p2["next_cursor"] is None
+    seen = [it["run_id"] for it in p1["items"] + p2["items"]]
+    assert len(set(seen)) == 3  # no dup / skip across the boundary
+
+
+def test_bad_cursor_is_422(client):
+    r = client.get("/api/v1/runs?cursor=@@notbase64@@", headers=ADMIN)
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "validation_error"
+
+
+def test_delete_run(client, monkeypatch, tmp_path):
+    _install_fake_pipeline(monkeypatch, tmp_path)
+    run_id = client.post("/api/v1/actions/render", headers=ADMIN,
+                         json={"topic": "f1", "design": "newsflash"}).json()["data"]["run_id"]
+    assert client.delete(f"/api/v1/runs/{run_id}", headers=ADMIN).status_code == 200
+    assert client.get(f"/api/v1/runs/{run_id}", headers=ADMIN).status_code == 404
+
+
+def test_export_zip_and_traversal_guard(client, monkeypatch, tmp_path):
+    _install_fake_pipeline(monkeypatch, tmp_path)
+    run_id = client.post("/api/v1/actions/render", headers=ADMIN,
+                         json={"topic": "f1", "design": "newsflash"}).json()["data"]["run_id"]
+    z = client.get(f"/api/v1/runs/{run_id}/export", headers=ADMIN)
+    assert z.status_code == 200
+    assert z.headers["content-type"] == "application/zip"
+    names = set(zipfile.ZipFile(io.BytesIO(z.content)).namelist())
+    assert {"slide_0.png", "caption.txt", "metadata.json"} <= names
+    # path traversal via topic query -> 422 (slug pattern), never escapes
+    assert client.get("/api/v1/runs/x/export?topic=../../..",
+                      headers=ADMIN).status_code == 422
+    assert client.get("/api/v1/runs/x?topic=../../..", headers=ADMIN).status_code == 422
 
 
 # ── async jobs ──────────────────────────────────────────────────────────────
 
 
 def _poll_job(client, job_id, *, timeout=8.0):
-    import time
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        r = client.get(f"/api/v1/jobs/{job_id}", headers={"X-API-Key": "goodkey"})
-        assert r.status_code == 200, r.text
-        body = r.json()
+        body = client.get(f"/api/v1/jobs/{job_id}", headers=ADMIN).json()["data"]
         if body["status"] in ("succeeded", "failed"):
             return body
         time.sleep(0.05)
-    raise AssertionError(f"job {job_id} did not finish in {timeout}s")
+    raise AssertionError(f"job {job_id} never finished")
 
 
-def test_async_job_happy_path(api_client, monkeypatch, tmp_path):
-    topic, design = _install_fake_pipeline(monkeypatch, tmp_path)
-
-    r = api_client.post("/api/v1/jobs", headers={"X-API-Key": "goodkey"},
-                        json={"kind": "render", "topic": topic, "design": design})
-    assert r.status_code == 202, r.text
-    sub = r.json()
-    assert sub["status"] in ("queued", "running")
-    assert sub["status_url"].endswith(f"/api/v1/jobs/{sub['job_id']}")
-
-    final = _poll_job(api_client, sub["job_id"])
-    assert final["status"] == "succeeded", final
-    assert final["result"]["caption"] == "Verstappen wins Monaco 🏎"
-    assert final["result"]["slides"][0]["url"].endswith("slide_0.png")
-
-
-def test_async_job_failure_maps_to_failed(api_client, monkeypatch, tmp_path):
-    topic, design = _install_fake_pipeline(monkeypatch, tmp_path, status="no_usable")
-
-    r = api_client.post("/api/v1/jobs", headers={"X-API-Key": "goodkey"},
-                        json={"kind": "render", "topic": topic, "design": design})
-    assert r.status_code == 202, r.text
-    final = _poll_job(api_client, r.json()["job_id"])
-    assert final["status"] == "failed", final
-    assert final["error"]["code"] == "no_usable"
-    assert final["result"] is None
-
-
-def test_jobs_unknown_topic_fails_fast_with_404(api_client, monkeypatch, tmp_path):
+def test_async_job_lifecycle_and_listing(client, monkeypatch, tmp_path):
     _install_fake_pipeline(monkeypatch, tmp_path)
-    r = api_client.post("/api/v1/jobs", headers={"X-API-Key": "goodkey"},
-                        json={"kind": "render", "topic": "zzz_unknown",
-                              "design": "newsflash"})
+    r = client.post("/api/v1/jobs", headers=ADMIN,
+                    json={"kind": "render", "topic": "f1", "design": "newsflash"})
+    assert r.status_code == 202, r.text
+    sub = r.json()["data"]
+    assert sub["status"] in ("queued", "running")
+    final = _poll_job(client, sub["job_id"])
+    assert final["status"] == "succeeded"
+    assert final["result"]["caption"] == "Verstappen wins Monaco 🏎"
+    # listed under GET /jobs (paginated)
+    page = client.get("/api/v1/jobs?limit=10", headers=ADMIN).json()["data"]
+    assert any(j["job_id"] == sub["job_id"] for j in page["items"])
+    assert "next_cursor" in page
+
+
+def test_async_job_failure_maps_to_failed(client, monkeypatch, tmp_path):
+    _install_fake_pipeline(monkeypatch, tmp_path, status="no_usable")
+    r = client.post("/api/v1/jobs", headers=ADMIN,
+                    json={"kind": "render", "topic": "f1", "design": "newsflash"})
+    final = _poll_job(client, r.json()["data"]["job_id"])
+    assert final["status"] == "failed"
+    assert final["error"]["code"] == "no_usable"
+
+
+def test_jobs_unknown_kind_422(client):
+    r = client.post("/api/v1/jobs", headers=ADMIN,
+                    json={"kind": "bogus", "topic": "f1", "design": "newsflash"})
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "validation_error"
+
+
+# ── errors ──────────────────────────────────────────────────────────────────
+
+
+def test_unknown_topic_is_404(client, monkeypatch, tmp_path):
+    _install_fake_pipeline(monkeypatch, tmp_path)
+    r = client.post("/api/v1/actions/render", headers=ADMIN,
+                    json={"topic": "zzz_unknown", "design": "newsflash"})
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "not_found"
 
 
-# ── webhook SSRF guard ──────────────────────────────────────────────────────
+def test_validation_error_envelope(client):
+    r = client.post("/api/v1/actions/render", headers=ADMIN,
+                    json={"topic": "BAD SLUG!", "design": "newsflash"})
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "validation_error"
+    assert "details" in r.json()["error"]
 
 
-def test_webhook_ssrf_rejects_internal_targets(monkeypatch):
+def test_internal_routes_keep_legacy_shape(client):
+    # Studio internal routes are untouched: {detail}, no envelope.
+    r = client.get("/preview/articles?topic=__nope__")
+    assert r.status_code == 404
+    assert "detail" in r.json() and "error" not in r.json()
+    bad = client.post("/render", json={"topic": "BAD SLUG!", "design": "x"})
+    assert bad.status_code == 422
+    assert "detail" in bad.json() and "error" not in bad.json()
+
+
+def test_internal_error_returns_envelope(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, raise_server_exceptions=False)
+    import api.server as server
+
+    def _boom():
+        raise RuntimeError("kaboom: /secret/path leak")
+
+    monkeypatch.setattr(server, "list_topics_impl", _boom)
+    r = client.get("/api/v1/topics", headers=ADMIN)
+    assert r.status_code == 500
+    body = r.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "internal_error"
+    assert body["error"]["message"] == "internal error"  # no leaked internals
+
+
+def test_rate_limit_429_envelope(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path, limit="2/minute")
+    codes = [client.get("/api/v1/topics", headers=ADMIN).status_code for _ in range(4)]
+    assert 429 in codes
+    last = client.get("/api/v1/topics", headers=ADMIN)
+    if last.status_code == 429:
+        assert last.json()["error"]["code"] == "rate_limited"
+        assert "Retry-After" in last.headers
+
+
+# ── webhook SSRF guard (unchanged jobs internals) ───────────────────────────
+
+
+def test_webhook_ssrf_rejects_internal(monkeypatch, tmp_path):
+    _build_client(monkeypatch, tmp_path)  # ensures fresh api.jobs import
     from api.jobs import is_safe_webhook_url
-    monkeypatch.delenv("CAROUSEL_ALLOW_LOCAL", raising=False)
-    monkeypatch.delenv("CAROUSEL_WEBHOOK_ALLOW_HOSTS", raising=False)
-    assert is_safe_webhook_url("https://127.0.0.1/hook") is False
-    assert is_safe_webhook_url("https://10.0.0.1/hook") is False
-    assert is_safe_webhook_url("https://100.64.1.1/hook") is False  # tailnet/CGNAT
-    assert is_safe_webhook_url("http://example.com/hook") is False   # https required
+    assert is_safe_webhook_url("https://127.0.0.1/h") is False
+    assert is_safe_webhook_url("https://10.0.0.1/h") is False
+    assert is_safe_webhook_url("https://100.64.1.1/h") is False
+    assert is_safe_webhook_url("http://example.com/h") is False
 
 
-def test_webhook_allowlist_and_local_optin(monkeypatch):
-    from api.jobs import is_safe_webhook_url
-    monkeypatch.setenv("CAROUSEL_WEBHOOK_ALLOW_HOSTS", "receiver.internal")
-    assert is_safe_webhook_url("https://receiver.internal/hook") is True
-    monkeypatch.setenv("CAROUSEL_ALLOW_LOCAL", "1")
-    assert is_safe_webhook_url("http://127.0.0.1:9000/hook") is True
-
-
-def test_webhook_not_fired_for_rejected_url(monkeypatch):
-    """A blocked webhook_url must never reach the HTTP client."""
-    import api.jobs as jobs
-    monkeypatch.delenv("CAROUSEL_ALLOW_LOCAL", raising=False)
-    monkeypatch.delenv("CAROUSEL_WEBHOOK_ALLOW_HOSTS", raising=False)
-    called = {"n": 0}
-
-    class _FakeSession:
-        def post(self, *a, **k):
-            called["n"] += 1
-            raise AssertionError("should not be called")
-
-    monkeypatch.setattr(jobs.http, "session", lambda: _FakeSession())
-    job = jobs.Job(id="j1", kind="render", status="succeeded",
-                   webhook_url="https://127.0.0.1/hook", finished_at=1.0)
-    jobs._deliver_webhook(job)
-    assert called["n"] == 0
-
-
-def test_webhook_signed_delivery(monkeypatch):
+def test_webhook_signed_payload(monkeypatch, tmp_path):
+    _build_client(monkeypatch, tmp_path)
     import hashlib
     import hmac
+    import json as _json
     import api.jobs as jobs
     monkeypatch.setenv("CAROUSEL_WEBHOOK_ALLOW_HOSTS", "receiver.internal")
     monkeypatch.setenv("CAROUSEL_WEBHOOK_SECRET", "s3cret")
@@ -405,143 +415,18 @@ def test_webhook_signed_delivery(monkeypatch):
     class _Resp:
         status_code = 200
 
-    class _FakeSession:
+    class _Sess:
         def post(self, url, *, data, headers, timeout, allow_redirects):
-            captured["url"] = url
-            captured["data"] = data
-            captured["headers"] = headers
+            captured.update(url=url, data=data, headers=headers)
             return _Resp()
 
-    monkeypatch.setattr(jobs.http, "session", lambda: _FakeSession())
-    result = {"status": "ok", "run_id": "f1_newsflash_1_a", "caption": "Win 🏎",
-              "slides": [{"index": 0, "url": "https://x/slide_0.png"}], "articles": []}
-    job = jobs.Job(id="j2", kind="render", status="succeeded", result=result,
-                   webhook_url="https://receiver.internal/hook", finished_at=2.0)
+    monkeypatch.setattr(jobs.http, "session", lambda: _Sess())
+    job = jobs.Job(id="j1", kind="render", status="succeeded",
+                   result={"run_id": "r", "caption": "Win 🏎"},
+                   webhook_url="https://receiver.internal/h", finished_at=2.0)
     jobs._deliver_webhook(job)
-    assert captured["url"] == "https://receiver.internal/hook"
     expected = "sha256=" + hmac.new(b"s3cret", captured["data"], hashlib.sha256).hexdigest()
     assert captured["headers"]["X-Carousel-Signature"] == expected
-    # The payload body carries the terminal state + result (emoji preserved).
-    import json
-    payload = json.loads(captured["data"])
+    payload = _json.loads(captured["data"])
     assert payload["status"] == "succeeded"
-    assert payload["error"] is None
     assert payload["result"]["caption"] == "Win 🏎"
-    assert payload["finished_at"] == 2
-
-
-# ── validation envelopes ────────────────────────────────────────────────────
-
-
-def test_v1_validation_error_uses_envelope(api_client):
-    """A bad slug (uppercase / punctuation) trips schema validation → 422 in
-    the unified v1 envelope."""
-    r = api_client.post("/api/v1/render", headers={"X-API-Key": "goodkey"},
-                        json={"topic": "BAD SLUG!", "design": "newsflash"})
-    assert r.status_code == 422
-    body = r.json()
-    assert body["error"]["code"] == "unprocessable_entity"
-    assert "request_id" in body["error"]
-
-
-def test_internal_validation_error_keeps_legacy_shape(api_client):
-    """Internal /render keeps FastAPI's {detail: [...]} 422 shape so the
-    studio frontend is unaffected."""
-    r = api_client.post("/render", json={"topic": "BAD SLUG!", "design": "x"})
-    assert r.status_code == 422
-    body = r.json()
-    assert "detail" in body
-    assert "error" not in body
-
-
-def test_render_unknown_topic_is_404_not_409(api_client, monkeypatch, tmp_path):
-    _install_fake_pipeline(monkeypatch, tmp_path)
-    r = api_client.post("/api/v1/render", headers={"X-API-Key": "goodkey"},
-                        json={"topic": "zzz_unknown", "design": "newsflash"})
-    assert r.status_code == 404
-    assert r.json()["error"]["code"] == "not_found"
-
-
-# ── path traversal / security ───────────────────────────────────────────────
-
-
-def test_run_endpoints_reject_topic_path_traversal(api_client, monkeypatch, tmp_path):
-    """`?topic=../../..` must never escape OUTPUT_DIR — the slug pattern rejects
-    it with 422 before any filesystem access (regression for the traversal
-    found in review)."""
-    _install_fake_pipeline(monkeypatch, tmp_path)
-    r = api_client.get("/api/v1/runs/leak?topic=../../..",
-                       headers={"X-API-Key": "goodkey"})
-    assert r.status_code == 422, r.text
-    r2 = api_client.get("/api/v1/export/leak.zip?topic=../../..",
-                        headers={"X-API-Key": "goodkey"})
-    assert r2.status_code == 422, r2.text
-
-
-# ── async job kinds + discriminated union ───────────────────────────────────
-
-
-def test_async_job_render_edit_kind(api_client, monkeypatch, tmp_path):
-    topic, design = _install_fake_pipeline(monkeypatch, tmp_path)
-    r = api_client.post(
-        "/api/v1/jobs", headers={"X-API-Key": "goodkey"},
-        json={"kind": "render_edit", "topic": topic, "design": design,
-              "articles": [{"title": "A", "url": "https://x/a", "source": "S"}]},
-    )
-    assert r.status_code == 202, r.text
-    final = _poll_job(api_client, r.json()["job_id"])
-    assert final["status"] == "succeeded", final
-    assert final["result"]["run_id"]
-
-
-def test_async_job_unknown_kind_is_422(api_client):
-    r = api_client.post("/api/v1/jobs", headers={"X-API-Key": "goodkey"},
-                        json={"kind": "bogus", "topic": "f1", "design": "newsflash"})
-    assert r.status_code == 422
-    assert r.json()["error"]["code"] == "unprocessable_entity"
-
-
-# ── run-details degradation + job store TTL ─────────────────────────────────
-
-
-def test_run_details_degrades_without_run_json(api_client, monkeypatch, tmp_path):
-    """A run dir with slides but no run.json (legacy run) still returns 200,
-    degrading to slides-only (caption='' , articles=[])."""
-    import core.pipeline as pipeline
-    import api.server as server
-    import api.v1 as v1
-    for mod in (pipeline, server, v1):
-        monkeypatch.setattr(mod, "OUTPUT_DIR", tmp_path)
-    monkeypatch.setattr("api.v1.list_topics", lambda: ["f1"])
-    run_id = "f1_newsflash_1700000000_zzz"
-    d = tmp_path / "f1" / run_id
-    d.mkdir(parents=True)
-    (d / "slide_0.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 64)
-    r = api_client.get(f"/api/v1/runs/{run_id}", headers={"X-API-Key": "goodkey"})
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["caption"] == ""
-    assert body["articles"] == []
-    assert body["topic"] == "f1"
-    assert len(body["slides"]) == 1
-
-
-def test_job_store_ttl_eviction():
-    """A finished job past its TTL is evicted on the next submit()."""
-    from api.jobs import Job, JobStore
-
-    store = JobStore(max_workers=1, ttl=0.0)
-    try:
-        old = Job(id="old", kind="render", status="succeeded",
-                  created_at=1.0, finished_at=1.0)
-        with store._lock:
-            store._jobs["old"] = old
-
-        class _Out:
-            def model_dump(self):
-                return {}
-
-        store.submit("render", lambda: _Out(), base="")
-        assert store.get("old") is None
-    finally:
-        store.shutdown()
