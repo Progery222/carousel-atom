@@ -3,7 +3,7 @@
 between `api.server` and `api.v1`."""
 from __future__ import annotations
 
-from typing import Annotated, Literal, Optional, Union
+from typing import Annotated, Any, Generic, Literal, Optional, TypeVar, Union
 
 from pydantic import BaseModel, Field
 
@@ -68,6 +68,12 @@ class RenderPartialRequest(BaseModel):
     topic: Slug
     design: Slug
     articles: list[Optional[ArticleIn]] = Field(min_length=1, max_length=_MAX_ARTICLES)
+
+
+class PreviewRequest(BaseModel):
+    """Body for POST /api/v1/actions/preview."""
+    topic: Slug
+    limit: int = Field(default=12, ge=1, le=50)
 
 
 class SlideOut(BaseModel):
@@ -181,3 +187,96 @@ JobRequest = Annotated[
     Union[JobRenderRequest, JobRenderEditRequest, JobRenderPartialRequest],
     Field(discriminator="kind"),
 ]
+
+
+# ── Standard envelope + pagination (cross-service /api/v1 contract) ──────────
+#
+# Every /api/v1 JSON response is wrapped so a central service can consume all
+# services identically: success -> {success, data, meta}, error -> {success,
+# error, meta}. Generic models keep the OpenAPI contract truthful for codegen.
+
+T = TypeVar("T")
+
+
+class Meta(BaseModel):
+    request_id: str
+
+
+class Envelope(BaseModel, Generic[T]):
+    success: bool = True
+    data: T
+    meta: Meta
+
+
+class ErrorBody(BaseModel):
+    code: str  # unauthorized | forbidden | validation_error | not_found | conflict | rate_limited | internal_error
+    message: str
+    details: Optional[Any] = None
+
+
+class ErrorEnvelope(BaseModel):
+    success: bool = False
+    error: ErrorBody
+    meta: Meta
+
+
+class Page(BaseModel, Generic[T]):
+    """Cursor-paginated list payload (the `data` of an envelope)."""
+    items: list[T]
+    next_cursor: Optional[str] = None
+
+
+# ── System + resource models ────────────────────────────────────────────────
+
+
+class HealthOut(BaseModel):
+    status: str
+    version: str
+
+
+class MetaOut(BaseModel):
+    service: str
+    version: str
+    api_version: str
+    capabilities: dict
+    scopes: list[str]
+    pagination: dict
+    auth: dict
+
+
+class VerifyOut(BaseModel):
+    key_id: Optional[str] = None
+    name: str
+    scopes: list[str]
+
+
+class RunSummary(BaseModel):
+    run_id: str
+    topic: str
+    design: str
+    created_at: int
+    slide_count: int
+    caption: str = ""
+
+
+# ── API keys (admin-scoped management) ──────────────────────────────────────
+
+
+class ApiKeyOut(BaseModel):
+    key_id: str
+    name: str
+    key_prefix: str
+    scopes: list[str]
+    created_at: int
+    last_used_at: Optional[int] = None
+    revoked_at: Optional[int] = None
+
+
+class ApiKeyCreateOut(ApiKeyOut):
+    # The raw secret, returned ONCE at creation and never stored or shown again.
+    key: str
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    scopes: list[str] = Field(default_factory=lambda: ["read"], min_length=1, max_length=8)

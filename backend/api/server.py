@@ -40,7 +40,7 @@ from api.schemas import (
     SlideOut,
     TopicOut,
 )
-from core import dedup, llm
+from core import api_keys, dedup, llm
 from core.caption_engine import set_llm_rewriter
 from core.delivery import ADAPTERS as DELIVERY_ADAPTERS
 from core.http import prune_dir_older_than
@@ -63,6 +63,7 @@ log = get_logger("api")
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     dedup.init_db()
+    api_keys.init_db()  # hashed-key table for the public /api/v1 surface
     # Auto-prune the seen-store at startup so the DB doesn't grow forever.
     pruned = dedup.prune_seen(days=int(os.environ.get("CAROUSEL_PRUNE_DAYS", "180")))
     if pruned:
@@ -74,6 +75,8 @@ async def _lifespan(_app: FastAPI):
     verify_cache = OUTPUT_DIR / "_verify_cache"
     runs_pruned = prune_old_runs(cache_days)
     verify_pruned = prune_dir_older_than(verify_cache, cache_days)
+    # Keep the runs index aligned with the on-disk output retention.
+    dedup.prune_runs(cache_days)
     if runs_pruned or verify_pruned:
         log.info("startup prune: %d old run dirs, %d stale verify-cache files",
                  runs_pruned, verify_pruned)
@@ -100,81 +103,81 @@ app = FastAPI(title="Carousel Studio", lifespan=_lifespan)
 app.state.limiter = limiter
 
 
+# Standard cross-service error code set (rule 7). Every /api/v1 error maps onto
+# exactly one of these; internal `/` routes keep FastAPI's `{detail}` shape.
+_CODE_MAP = {
+    400: "validation_error", 401: "unauthorized", 403: "forbidden",
+    404: "not_found", 409: "conflict", 422: "validation_error",
+    429: "rate_limited",
+}
+
+
+def _code_for(status_code: int) -> str:
+    if status_code in _CODE_MAP:
+        return _CODE_MAP[status_code]
+    return "internal_error" if status_code >= 500 else "conflict"
+
+
+def _error_response(status_code: int, code: str, message: str, rid: str,
+                    *, details=None, headers=None) -> JSONResponse:
+    """Standard error envelope: {success:false, error:{code,message,details?}, meta}."""
+    err: dict = {"code": code, "message": message}
+    if details is not None:
+        err["details"] = details
+    return JSONResponse(
+        status_code=status_code,
+        content={"success": False, "error": err, "meta": {"request_id": rid}},
+        headers=headers or {},
+    )
+
+
 @app.exception_handler(RateLimitExceeded)
 async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
     rid = getattr(request.state, "request_id", "")
-    return JSONResponse(
-        status_code=429,
-        content={
-            "error": {
-                "code": "rate_limited",
-                "message": f"rate limit exceeded: {exc.detail}",
-                "request_id": rid,
-            }
-        },
-        headers={"Retry-After": "60"},
-    )
+    return _error_response(429, "rate_limited", f"rate limit exceeded: {exc.detail}",
+                           rid, headers={"Retry-After": "60"})
 
 
 @app.exception_handler(HTTPException)
 async def _http_exc_handler(request: Request, exc: HTTPException):
-    """Unified error shape for /api/v1 — internal routes keep FastAPI defaults
-    so the studio frontend (which already parses `{detail: ...}`) is unaffected.
-    """
+    """Standard error envelope for /api/v1 — internal routes keep FastAPI's
+    `{detail: ...}` so the studio frontend is unaffected."""
     rid = getattr(request.state, "request_id", "")
     if request.url.path.startswith("/api/v1/"):
-        # Map common HTTP codes to stable string codes the client can switch on.
-        code_map = {
-            400: "bad_request", 401: "unauthorized", 403: "forbidden",
-            404: "not_found", 409: "conflict", 413: "payload_too_large",
-            429: "rate_limited", 503: "service_unavailable",
-        }
-        code = code_map.get(exc.status_code, f"http_{exc.status_code}")
-        # Pipeline errors (409) embed the diagnostics dict as detail. Keep it
-        # inside the unified envelope so consumers can still drill in.
         if isinstance(exc.detail, dict):
-            payload: dict = {
-                "code": exc.detail.get("status", code),
-                "message": exc.detail.get("message", str(exc.detail)),
-                "request_id": rid,
-                "details": exc.detail,
-            }
-        else:
-            payload = {"code": code, "message": str(exc.detail), "request_id": rid}
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={"error": payload},
-            headers=exc.headers or {},
-        )
-    # Default FastAPI shape for everything else.
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"detail": exc.detail},
-        headers=exc.headers or {},
-    )
+            # Pipeline failure (409): {status, message?, diagnostics?}. Surface
+            # the standard code with the diagnostics under `details`.
+            message = (exc.detail.get("message") or exc.detail.get("status")
+                       or "request could not be completed")
+            return _error_response(exc.status_code, _code_for(exc.status_code),
+                                   message, rid, details=exc.detail, headers=exc.headers)
+        return _error_response(exc.status_code, _code_for(exc.status_code),
+                               str(exc.detail), rid, headers=exc.headers)
+    return JSONResponse(status_code=exc.status_code,
+                        content={"detail": exc.detail}, headers=exc.headers or {})
 
 
 @app.exception_handler(RequestValidationError)
 async def _validation_exc_handler(request: Request, exc: RequestValidationError):
-    """Wrap pydantic request-validation errors (422) in the unified envelope
-    for /api/v1 — internal `/` routes keep FastAPI's default `{detail: [...]}`
-    shape so the studio frontend (which parses it) is unaffected.
-    """
+    """Pydantic request-validation -> 422 validation_error envelope for /api/v1;
+    internal `/` routes keep FastAPI's default `{detail: [...]}`."""
     rid = getattr(request.state, "request_id", "")
     errors = jsonable_encoder(exc.errors())
     if request.url.path.startswith("/api/v1/"):
-        return JSONResponse(
-            status_code=422,
-            content={
-                "error": {
-                    "code": "unprocessable_entity",
-                    "message": "request validation failed",
-                    "request_id": rid,
-                    "details": errors,
-                }
-            },
-        )
+        return _error_response(422, "validation_error", "request validation failed",
+                               rid, details=errors)
     return JSONResponse(status_code=422, content={"detail": errors})
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exc_handler(request: Request, exc: Exception):
+    """Catch-all so an unhandled bug on /api/v1 returns the `internal_error`
+    envelope (never a non-JSON 500). The request middleware already logged the
+    traceback. Internal `/` routes keep the default 500 shape."""
+    rid = getattr(request.state, "request_id", "")
+    if request.url.path.startswith("/api/v1/"):
+        return _error_response(500, "internal_error", "internal error", rid)
+    return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
 
 
 class _RequestContextMiddleware(BaseHTTPMiddleware):
@@ -330,6 +333,12 @@ def _persist_run(result: dict) -> None:
         tmp = out_dir / (RUN_META_FILENAME + ".tmp")
         tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, out_dir / RUN_META_FILENAME)
+        # Index the run so GET /api/v1/runs can paginate it (best-effort).
+        dedup.record_run(
+            run_id=meta["run_id"], topic=meta["topic"], design=meta["design"],
+            created_at=meta["created_at"], slide_count=len(result.get("slide_paths", [])),
+            caption=meta["caption"],
+        )
     except Exception:
         log.warning("failed to persist %s for run %s",
                     RUN_META_FILENAME, result.get("run_id"), exc_info=True)
@@ -679,15 +688,14 @@ def health():
 #
 # The public router is included AFTER the internal routes are registered
 # but BEFORE the frontend SPA mount (which captures everything under "/").
-from api.v1 import public_health, router as v1_router  # noqa: E402
+from api.v1 import (  # noqa: E402
+    SERVICE_VERSION,
+    router as v1_router,
+    system_router as v1_system_router,
+)
 
-
-@app.get("/api/v1/health", tags=["Public API v1"], summary="Liveness ping")
-def v1_health():
-    """Auth-free liveness check for the public API."""
-    return public_health()
-
-
+# System endpoints (health/meta) are auth-free; the rest of /api/v1 requires a key.
+app.include_router(v1_system_router)
 app.include_router(v1_router)
 
 
@@ -700,18 +708,27 @@ from fastapi.openapi.utils import get_openapi  # noqa: E402
 
 @app.get("/api/v1/openapi.json", include_in_schema=False)
 def v1_openapi():
-    """OpenAPI 3.1 schema filtered to /api/v1/* routes only."""
+    """OpenAPI 3.1 schema filtered to /api/v1/* routes only. Responses already
+    carry the `{success, data, meta}` envelope (via `Envelope[T]` response
+    models), so the contract a central service reads is accurate. Adds the
+    `X-API-Key` security scheme."""
     public_routes = [r for r in app.routes
                      if getattr(r, "path", "").startswith("/api/v1")]
-    return get_openapi(
-        title="Carousel Studio Public API",
-        version="1.0.0",
+    schema = get_openapi(
+        title="Carousel Studio API",
+        version=SERVICE_VERSION,
         description=(
-            "Server-to-server API for generating news carousels.\n\n"
-            "Auth: `X-API-Key` header (set via `CAROUSEL_API_KEYS` on the server)."
+            "Cross-service standard REST API for generating news carousels.\n\n"
+            "Every JSON response uses the `{success, data, meta}` envelope. "
+            "Auth: `X-API-Key` header."
         ),
         routes=public_routes,
     )
+    schema.setdefault("components", {}).setdefault("securitySchemes", {})["ApiKeyAuth"] = {
+        "type": "apiKey", "in": "header", "name": "X-API-Key",
+    }
+    schema["security"] = [{"ApiKeyAuth": []}]
+    return schema
 
 
 @app.get("/api/v1/docs", include_in_schema=False)

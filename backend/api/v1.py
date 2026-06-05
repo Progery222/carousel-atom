@@ -1,23 +1,22 @@
-"""Public /api/v1 router for Carousel Studio.
+"""Public /api/v1 router for Carousel Studio — cross-service standard surface.
 
-External services authenticate with `X-API-Key` (configured via the
-`CAROUSEL_API_KEYS` env var) and get a stable, versioned surface for:
+External services authenticate with `X-API-Key` and consume a uniform contract:
+- every JSON response is `{success, data, meta:{request_id}}` (errors:
+  `{success:false, error:{code,message,details?}, meta}`) — see `api.server`
+  exception handlers and `api.responses.ok`;
+- resources use CRUD-ish GET/POST/DELETE; service operations are
+  `POST /actions/{name}`; lists are cursor-paginated (`limit` + `cursor`);
+- API keys are hashed in the DB with `read`/`write`/`admin` scopes.
 
-- listing topics & designs (discovery)
-- previewing fresh candidates
-- rendering carousels (full, edit, partial)
-- downloading the rendered run as a ZIP
-
-All handlers are thin wrappers over `api.server` impl functions, so the
-behavior matches the studio frontend exactly. Errors come back as
-`{"error": {"code": ..., "message": ..., "request_id": ...}}` via the
-unified handler in `api.server`.
+System endpoints (`/health`, `/meta`, `/openapi.json`) are auth-free;
+everything else requires a key with a sufficient scope.
 """
 from __future__ import annotations
 
 import io
 import json
 import os
+import shutil
 import zipfile
 from pathlib import Path
 from typing import Optional
@@ -25,133 +24,186 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from api.auth import ApiKeyInfo, verify_api_key
+from api.auth import ApiKeyInfo, auth_dependency, require_scope
 from api.jobs import get_store
 from api.rate_limit import HEAVY_LIMIT, LIGHT_LIMIT, limiter
+from api.responses import decode_cursor, encode_cursor, ok, paginate_sorted
 from api.schemas import (
+    ApiKeyCreateOut,
+    ApiKeyCreateRequest,
+    ApiKeyOut,
+    DesignOut,
+    Envelope,
+    HealthOut,
     JobOut,
     JobRequest,
+    MetaOut,
+    Page,
     PreviewOut,
+    PreviewRequest,
     RenderEditRequest,
     RenderOut,
     RenderPartialRequest,
     RenderRequest,
+    RunSummary,
+    TopicOut,
+    VerifyOut,
 )
+from core import api_keys, dedup
 from core.pipeline import OUTPUT_DIR
 from core.topic_loader import list_topics
 
+# Keep in sync with backend/pyproject.toml [project] version.
+SERVICE_VERSION = "0.1.0"
+API_VERSION = "v1"
 
-def _attach_key(info: ApiKeyInfo, request: Request) -> ApiKeyInfo:
-    """Stash the matched key on request.state so the rate-limiter and
-    logging middleware can read it. The limiter's key_func reads from
-    request.state.api_key directly."""
-    request.state.api_key = info
-    return info
-
-
-def _key_dep(request: Request, info: ApiKeyInfo = Depends(verify_api_key)) -> ApiKeyInfo:
-    return _attach_key(info, request)
-
-
-router = APIRouter(
-    prefix="/api/v1",
-    tags=["Public API v1"],
-    dependencies=[Depends(_key_dep)],
-)
+# Auth-free system surface (health/meta). Auth'd surface for everything else;
+# `auth_dependency` attaches the key to request.state for the limiter + logs.
+system_router = APIRouter(prefix="/api/v1", tags=["System"])
+router = APIRouter(prefix="/api/v1", tags=["Public API v1"],
+                   dependencies=[Depends(auth_dependency)])
 
 
 def _public_base(request: Request) -> str:
-    """Base URL for absolute asset links in responses.
-
-    Order of precedence:
-    1. `PUBLIC_BASE_URL` env var (set this to the public origin behind your
-       reverse proxy / Tailscale Funnel).
-    2. `request.base_url` — works when the app is hit directly.
-    """
+    """Base URL for absolute asset links. `PUBLIC_BASE_URL` (behind a reverse
+    proxy / Tailscale Funnel) wins, else the request host."""
     env = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
-    if env:
-        return env
-    return str(request.base_url).rstrip("/")
+    return env if env else str(request.base_url).rstrip("/")
 
 
-# ── Discovery ──────────────────────────────────────────────────────────────
+# ── System (no auth) ─────────────────────────────────────────────────────────
 
 
-@router.get("/topics", summary="List available topics")
+@system_router.get("/health", response_model=Envelope[HealthOut], summary="Liveness ping")
+def v1_health(request: Request):
+    return ok(HealthOut(status="ok", version=SERVICE_VERSION), request)
+
+
+@system_router.get("/meta", response_model=Envelope[MetaOut], summary="Service metadata / contract")
+@limiter.limit(LIGHT_LIMIT)
+def v1_meta(request: Request):
+    data = MetaOut(
+        service="carousel-studio",
+        version=SERVICE_VERSION,
+        api_version=API_VERSION,
+        capabilities={
+            "resources": ["topics", "designs", "runs", "jobs", "api-keys"],
+            "actions": ["render", "render-edit", "render-partial", "preview"],
+        },
+        scopes=["read", "write", "admin"],
+        pagination={"style": "cursor", "limit_param": "limit",
+                    "cursor_param": "cursor", "default_limit": 20, "max_limit": 100},
+        auth={"type": "apiKey", "in": "header", "name": "X-API-Key"},
+    )
+    return ok(data, request)
+
+
+# ── Auth introspection ───────────────────────────────────────────────────────
+
+
+@router.get("/auth/verify", response_model=Envelope[VerifyOut],
+            summary="Verify the calling API key")
+@limiter.limit(LIGHT_LIMIT)
+def v1_auth_verify(request: Request, info: ApiKeyInfo = Depends(auth_dependency)):
+    return ok(VerifyOut(key_id=info.key_id, name=info.name,
+                        scopes=sorted(info.scopes)), request)
+
+
+# ── Discovery resources ──────────────────────────────────────────────────────
+
+
+@router.get("/topics", response_model=Envelope[list[TopicOut]],
+            dependencies=[Depends(require_scope("read"))], summary="List topics")
 @limiter.limit(LIGHT_LIMIT)
 def v1_topics(request: Request):
     from api.server import list_topics_impl
-    return list_topics_impl()
+    return ok(list_topics_impl(), request)
 
 
-@router.get("/designs", summary="List available designs")
+@router.get("/topics/{slug}", response_model=Envelope[TopicOut],
+            dependencies=[Depends(require_scope("read"))], summary="Get a topic")
+@limiter.limit(LIGHT_LIMIT)
+def v1_topic(request: Request, slug: str):
+    from api.server import list_topics_impl
+    for t in list_topics_impl():
+        if t.slug == slug:
+            return ok(t, request)
+    raise HTTPException(status_code=404, detail=f"unknown topic: {slug}")
+
+
+@router.get("/designs", response_model=Envelope[list[DesignOut]],
+            dependencies=[Depends(require_scope("read"))], summary="List designs")
 @limiter.limit(LIGHT_LIMIT)
 def v1_designs(request: Request):
     from api.server import list_designs_impl
-    return list_designs_impl()
+    return ok(list_designs_impl(), request)
 
 
-# ── Preview ────────────────────────────────────────────────────────────────
-
-
-@router.get("/preview/articles", response_model=PreviewOut,
-            summary="Preview fresh article candidates")
+@router.get("/designs/{slug}", response_model=Envelope[DesignOut],
+            dependencies=[Depends(require_scope("read"))], summary="Get a design")
 @limiter.limit(LIGHT_LIMIT)
-def v1_preview(request: Request, topic: str,
-               limit: int = Query(12, ge=1, le=50)):
+def v1_design(request: Request, slug: str):
+    from api.server import list_designs_impl
+    for d in list_designs_impl():
+        if d.slug == slug:
+            return ok(d, request)
+    raise HTTPException(status_code=404, detail=f"unknown design: {slug}")
+
+
+# ── Actions (service operations) ─────────────────────────────────────────────
+
+
+@router.post("/actions/preview", response_model=Envelope[PreviewOut],
+             dependencies=[Depends(require_scope("read"))],
+             summary="Preview fresh article candidates (no render)")
+@limiter.limit(LIGHT_LIMIT)
+def v1_action_preview(request: Request, body: PreviewRequest):
     from api.server import preview_impl
-    return preview_impl(topic, limit=limit)
+    return ok(preview_impl(body.topic, limit=body.limit), request)
 
 
-# ── Render ─────────────────────────────────────────────────────────────────
-
-
-@router.post("/render", response_model=RenderOut, summary="Render a fresh carousel")
+@router.post("/actions/render", response_model=Envelope[RenderOut],
+             dependencies=[Depends(require_scope("write"))],
+             summary="Render a fresh carousel")
 @limiter.limit(HEAVY_LIMIT)
-def v1_render(request: Request, req: RenderRequest):
+def v1_action_render(request: Request, body: RenderRequest):
     from api.server import render_impl
-    return render_impl(req, base=_public_base(request))
+    return ok(render_impl(body, base=_public_base(request)), request)
 
 
-@router.post("/render/edit", response_model=RenderOut,
+@router.post("/actions/render-edit", response_model=Envelope[RenderOut],
+             dependencies=[Depends(require_scope("write"))],
              summary="Re-render with user-edited articles")
 @limiter.limit(HEAVY_LIMIT)
-def v1_render_edit(request: Request, req: RenderEditRequest):
+def v1_action_render_edit(request: Request, body: RenderEditRequest):
     from api.server import render_edit_impl
-    return render_edit_impl(req, base=_public_base(request))
+    return ok(render_edit_impl(body, base=_public_base(request)), request)
 
 
-@router.post("/render/partial", response_model=RenderOut,
+@router.post("/actions/render-partial", response_model=Envelope[RenderOut],
+             dependencies=[Depends(require_scope("write"))],
              summary="Per-slot re-roll render")
 @limiter.limit(HEAVY_LIMIT)
-def v1_render_partial(request: Request, req: RenderPartialRequest):
+def v1_action_render_partial(request: Request, body: RenderPartialRequest):
     from api.server import render_partial_impl
-    return render_partial_impl(req, base=_public_base(request))
+    return ok(render_partial_impl(body, base=_public_base(request)), request)
 
 
-# ── ZIP export ─────────────────────────────────────────────────────────────
+# ── Runs ─────────────────────────────────────────────────────────────────────
 
 
 def _resolve_run_dir(run_id: str, topic: str | None) -> Path:
-    """Locate the run directory under OUTPUT_DIR/<topic>/<run_id>.
+    """Locate OUTPUT_DIR/<topic>/<run_id>, rejecting path traversal.
 
-    `run_id` format is `{topic}_{design}_{ts}_{uid}` — we can recover the
-    topic by splitting, but the caller can also pass it explicitly via
-    query param if the slug contains underscores (e.g. `red_bull`).
-
-    Security: `run_id` and `topic` become path segments. A query-string
-    `topic` bypasses the ASGI path-normalization that strips `..`, so we
-    reject path separators / `..` up front AND verify the resolved path is
-    contained within OUTPUT_DIR before any filesystem access — otherwise
-    `?topic=../../x` would escape the output tree (path traversal).
-    """
+    `run_id`/`topic` become path segments; a query-string `topic` bypasses ASGI
+    path normalization, so we reject separators/`..` and verify the resolved
+    path stays inside OUTPUT_DIR before any filesystem access."""
     if not run_id or "/" in run_id or "\\" in run_id or ".." in run_id:
         raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
     candidates: list[str] = []
     if topic:
         candidates.append(topic)
     else:
-        # Heuristic: try every known topic prefix until one matches a real dir.
         for slug in list_topics():
             if run_id.startswith(f"{slug}_"):
                 candidates.append(slug)
@@ -170,16 +222,12 @@ def _resolve_run_dir(run_id: str, topic: str | None) -> Path:
     raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
 
 
-# Sidecar written next to the slides at render time (see
-# `api.server._persist_run`). Holds the caption + article metadata that the
-# pipeline itself never persists to disk.
 RUN_META_FILENAME = "run.json"
 
 
 def _read_run_meta(run_dir: Path) -> Optional[dict]:
-    """Read the `run.json` sidecar written at render time. Tolerant: returns
-    None when the file is missing or unreadable (older runs predate it, or a
-    crash truncated it) so callers degrade gracefully to slides-only."""
+    """Read the `run.json` sidecar (caption + articles). None if missing/broken
+    so callers degrade to slides-only."""
     try:
         return json.loads((run_dir / RUN_META_FILENAME).read_text(encoding="utf-8"))
     except Exception:
@@ -187,11 +235,7 @@ def _read_run_meta(run_dir: Path) -> Optional[dict]:
 
 
 def _zip_stream(run_dir: Path) -> io.BytesIO:
-    """Build a ZIP of all slide_*.png files in the run dir, plus
-    metadata.json (run_id, topic, design, slide count) and caption.txt.
-    The caption comes from the `run.json` sidecar (falling back to a legacy
-    caption.txt file if one is present). Buffered in memory — runs are
-    small (<10MB)."""
+    """ZIP of slide_*.png + caption.txt (from run.json) + metadata.json."""
     buf = io.BytesIO()
     slide_paths = sorted(run_dir.glob("slide_*.png"))
     if not slide_paths:
@@ -204,8 +248,6 @@ def _zip_stream(run_dir: Path) -> io.BytesIO:
         "design": meta.get("design", parts[1] if len(parts) >= 2 else ""),
         "slide_count": len(slide_paths),
     }
-    # Caption: prefer the persisted run.json; fall back to a legacy
-    # caption.txt file next to the slides if one happens to exist.
     caption = meta.get("caption")
     if caption is None:
         legacy = run_dir / "caption.txt"
@@ -220,34 +262,34 @@ def _zip_stream(run_dir: Path) -> io.BytesIO:
     return buf
 
 
-@router.get("/export/{run_id}.zip", summary="Download rendered run as a ZIP")
-@limiter.limit(HEAVY_LIMIT)
-def v1_export_zip(request: Request, run_id: str,
-                  topic: Optional[str] = Query(default=None, pattern=r"^[a-z0-9_]+$")):
-    run_dir = _resolve_run_dir(run_id, topic)
-    buf = _zip_stream(run_dir)
-    return StreamingResponse(
-        buf,
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{run_id}.zip"'},
-    )
+@router.get("/runs", response_model=Envelope[Page[RunSummary]],
+            dependencies=[Depends(require_scope("read"))],
+            summary="List rendered runs (cursor-paginated)")
+@limiter.limit(LIGHT_LIMIT)
+def v1_list_runs(request: Request,
+                 limit: int = Query(20, ge=1, le=100),
+                 cursor: Optional[str] = Query(default=None)):
+    after = decode_cursor(cursor)
+    rows, has_more = dedup.list_runs(limit=limit, cursor=after)
+    next_cursor = None
+    if has_more and rows:
+        last = rows[-1]
+        next_cursor = encode_cursor(last["created_at"], last["id"])
+    items = [
+        RunSummary(run_id=r["run_id"], topic=r["topic"], design=r["design"],
+                   created_at=r["created_at"], slide_count=r["slide_count"],
+                   caption=r["caption"] or "")
+        for r in rows
+    ]
+    return ok(Page(items=items, next_cursor=next_cursor), request)
 
 
-# ── Run details ────────────────────────────────────────────────────────────
-
-
-@router.get("/runs/{run_id}", response_model=RenderOut,
+@router.get("/runs/{run_id}", response_model=Envelope[RenderOut],
+            dependencies=[Depends(require_scope("read"))],
             summary="Fetch a previously rendered run")
 @limiter.limit(LIGHT_LIMIT)
 def v1_get_run(request: Request, run_id: str,
                topic: Optional[str] = Query(default=None, pattern=r"^[a-z0-9_]+$")):
-    """Re-read a finished run from disk: caption, articles and absolute slide
-    URLs, reconstructed from the `run.json` sidecar (degrades to slides-only
-    if the sidecar is missing — e.g. a run rendered before this existed).
-
-    This is the durable counterpart to an async job: a `job_id` is ephemeral,
-    but the `run_id` keeps working across restarts. Pass `?topic=...` if the
-    run-id heuristic can't recover a slug containing underscores."""
     from api.server import _to_render_out
     run_dir = _resolve_run_dir(run_id, topic)
     slide_paths = sorted(str(p) for p in run_dir.glob("slide_*.png"))
@@ -263,35 +305,61 @@ def v1_get_run(request: Request, run_id: str,
         "articles": meta.get("articles", []),
         "slide_paths": slide_paths,
     }
-    return _to_render_out(result, base=_public_base(request))
+    return ok(_to_render_out(result, base=_public_base(request)), request)
 
 
-# ── Async jobs ─────────────────────────────────────────────────────────────
+@router.get("/runs/{run_id}/export", summary="Download a run as a ZIP (binary)")
+@limiter.limit(HEAVY_LIMIT)
+def v1_export_run(request: Request, run_id: str,
+                  topic: Optional[str] = Query(default=None, pattern=r"^[a-z0-9_]+$"),
+                  _: ApiKeyInfo = Depends(require_scope("read"))):
+    run_dir = _resolve_run_dir(run_id, topic)
+    buf = _zip_stream(run_dir)
+    return StreamingResponse(
+        buf, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{run_id}.zip"'},
+    )
+
+
+@router.delete("/runs/{run_id}", response_model=Envelope[dict],
+               dependencies=[Depends(require_scope("write"))],
+               summary="Delete a rendered run")
+@limiter.limit(LIGHT_LIMIT)
+def v1_delete_run(request: Request, run_id: str,
+                  topic: Optional[str] = Query(default=None, pattern=r"^[a-z0-9_]+$")):
+    existed = dedup.delete_run(run_id)
+    try:
+        run_dir = _resolve_run_dir(run_id, topic)
+        shutil.rmtree(run_dir, ignore_errors=True)
+        existed = True
+    except HTTPException:
+        pass
+    if not existed:
+        raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+    return ok({"run_id": run_id, "deleted": True}, request)
+
+
+# ── Async jobs ───────────────────────────────────────────────────────────────
 
 
 def _job_to_out(job, *, base: str = "") -> JobOut:
     status_url = f"{base.rstrip('/')}/api/v1/jobs/{job.id}" if base else None
     return JobOut(
-        job_id=job.id,
-        kind=job.kind,
-        status=job.status,
+        job_id=job.id, kind=job.kind, status=job.status,
         created_at=int(job.created_at),
         started_at=int(job.started_at) if job.started_at else None,
         finished_at=int(job.finished_at) if job.finished_at else None,
-        status_url=status_url,
-        result=job.result,
-        error=job.error,
+        status_url=status_url, result=job.result, error=job.error,
     )
 
 
-@router.post("/jobs", status_code=202, response_model=JobOut,
+@router.post("/jobs", status_code=202, response_model=Envelope[JobOut],
+             dependencies=[Depends(require_scope("write"))],
              summary="Submit an async render job")
 @limiter.limit(HEAVY_LIMIT)
 def v1_create_job(request: Request, body: JobRequest):
-    """Enqueue a render and return immediately with `202` + a `job_id`. Poll
-    `GET /api/v1/jobs/{job_id}` for status/result, or supply a `webhook_url`
-    (https-only, SSRF-guarded) to be notified on completion. Same request body
-    as the sync render endpoints, tagged with `kind`."""
+    """Enqueue a render → `202` + `job_id`. Poll `GET /api/v1/jobs/{job_id}` or
+    supply an https `webhook_url` (SSRF-guarded) for a completion callback."""
     from api.server import (
         render_edit_impl,
         render_impl,
@@ -299,13 +367,9 @@ def v1_create_job(request: Request, body: JobRequest):
         _validate_topic_design,
     )
     base = _public_base(request)
-    # Fail fast on an unknown topic/design instead of returning 202 then failing.
     _validate_topic_design(body.topic, body.design)
-    impls = {
-        "render": render_impl,
-        "render_edit": render_edit_impl,
-        "render_partial": render_partial_impl,
-    }
+    impls = {"render": render_impl, "render_edit": render_edit_impl,
+             "render_partial": render_partial_impl}
     impl = impls[body.kind]
 
     def _fn():
@@ -313,15 +377,30 @@ def v1_create_job(request: Request, body: JobRequest):
 
     info = getattr(request.state, "api_key", None)
     job = get_store().submit(
-        body.kind, _fn,
-        api_key_name=getattr(info, "name", "-"),
-        webhook_url=body.webhook_url or "",
-        base=base,
+        body.kind, _fn, api_key_name=getattr(info, "name", "-"),
+        webhook_url=body.webhook_url or "", base=base,
     )
-    return _job_to_out(job, base=base)
+    return ok(_job_to_out(job, base=base), request)
 
 
-@router.get("/jobs/{job_id}", response_model=JobOut,
+@router.get("/jobs", response_model=Envelope[Page[JobOut]],
+            dependencies=[Depends(require_scope("read"))],
+            summary="List async jobs (cursor-paginated)")
+@limiter.limit(LIGHT_LIMIT)
+def v1_list_jobs(request: Request,
+                 limit: int = Query(20, ge=1, le=100),
+                 cursor: Optional[str] = Query(default=None)):
+    base = _public_base(request)
+    jobs = get_store().list()  # snapshot, newest first
+    page_jobs, next_cursor = paginate_sorted(
+        jobs, limit=limit, cursor=cursor, key=lambda j: (int(j.created_at), j.seq)
+    )
+    items = [_job_to_out(j, base=base) for j in page_jobs]
+    return ok(Page(items=items, next_cursor=next_cursor), request)
+
+
+@router.get("/jobs/{job_id}", response_model=Envelope[JobOut],
+            dependencies=[Depends(require_scope("read"))],
             summary="Get async job status & result")
 @limiter.limit(LIGHT_LIMIT)
 def v1_get_job(request: Request, job_id: str):
@@ -332,14 +411,47 @@ def v1_get_job(request: Request, job_id: str):
             detail=(f"job not found or expired: {job_id} — if the render "
                     f"finished, fetch it by run_id via GET /api/v1/runs/{{run_id}}"),
         )
-    return _job_to_out(job, base=_public_base(request))
+    return ok(_job_to_out(job, base=_public_base(request)), request)
 
 
-# ── Health (no auth) ───────────────────────────────────────────────────────
-#
-# Mounted separately at module load time on the main app to skip auth.
-# Exposed here as a function so server.py can register it.
+# ── API keys (admin) ─────────────────────────────────────────────────────────
 
 
-def public_health() -> dict:
-    return {"ok": True, "service": "carousel-studio", "version": "1"}
+@router.get("/api-keys", response_model=Envelope[list[ApiKeyOut]],
+            dependencies=[Depends(require_scope("admin"))], summary="List API keys")
+@limiter.limit(LIGHT_LIMIT)
+def v1_list_keys(request: Request):
+    return ok([ApiKeyOut(**k) for k in api_keys.list_keys()], request)
+
+
+@router.post("/api-keys", status_code=201, response_model=Envelope[ApiKeyCreateOut],
+             dependencies=[Depends(require_scope("admin"))],
+             summary="Create an API key (raw secret shown once)")
+@limiter.limit(LIGHT_LIMIT)
+def v1_create_key(request: Request, body: ApiKeyCreateRequest):
+    try:
+        rec = api_keys.create_key(body.name, body.scopes)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return ok(ApiKeyCreateOut(**rec), request)
+
+
+@router.get("/api-keys/{key_id}", response_model=Envelope[ApiKeyOut],
+            dependencies=[Depends(require_scope("admin"))], summary="Get an API key")
+@limiter.limit(LIGHT_LIMIT)
+def v1_get_key(request: Request, key_id: str):
+    rec = api_keys.get_key(key_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"key not found: {key_id}")
+    return ok(ApiKeyOut(**rec), request)
+
+
+@router.delete("/api-keys/{key_id}", response_model=Envelope[dict],
+               dependencies=[Depends(require_scope("admin"))],
+               summary="Revoke an API key")
+@limiter.limit(LIGHT_LIMIT)
+def v1_revoke_key(request: Request, key_id: str):
+    if not api_keys.revoke_key(key_id):
+        raise HTTPException(status_code=404,
+                            detail=f"key not found or already revoked: {key_id}")
+    return ok({"key_id": key_id, "revoked": True}, request)

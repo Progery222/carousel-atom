@@ -44,6 +44,19 @@ CREATE TABLE IF NOT EXISTS posts (
     slide_count INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_posts_topic_time ON posts(topic, posted_at);
+
+-- Index of every rendered run (populated by the API layer's _persist_run) so
+-- GET /api/v1/runs can keyset-paginate without scanning the output directory.
+CREATE TABLE IF NOT EXISTS runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      TEXT NOT NULL UNIQUE,
+    topic       TEXT NOT NULL,
+    design      TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    slide_count INTEGER NOT NULL DEFAULT 0,
+    caption     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_runs_created ON runs(created_at, id);
 """
 
 
@@ -172,3 +185,69 @@ def recent_posts(limit: int = 30) -> list[dict]:
             (limit,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── runs index (for GET /api/v1/runs pagination) ────────────────────────────
+
+
+def record_run(run_id: str, topic: str, design: str, created_at: int,
+               slide_count: int, caption: str = "") -> None:
+    """Upsert a run into the index. Called best-effort from the API layer after
+    a successful render (alongside the run.json sidecar)."""
+    with conn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO runs(run_id, topic, design, created_at, slide_count, caption) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (run_id, topic, design, int(created_at), int(slide_count), caption),
+        )
+
+
+def list_runs(limit: int = 20, cursor: tuple[int, int] | None = None) -> tuple[list[dict], bool]:
+    """Keyset page of runs, newest first. `cursor` is `(created_at, id)` of the
+    last item already seen. Returns (items, has_more). Fetches limit+1 to detect
+    whether a next page exists. Tolerant of a missing table (returns empty)."""
+    try:
+        with conn() as c:
+            if cursor is None:
+                rows = c.execute(
+                    "SELECT * FROM runs ORDER BY created_at DESC, id DESC LIMIT ?",
+                    (limit + 1,),
+                ).fetchall()
+            else:
+                ca, rid = cursor
+                rows = c.execute(
+                    "SELECT * FROM runs WHERE created_at < ? OR (created_at = ? AND id < ?) "
+                    "ORDER BY created_at DESC, id DESC LIMIT ?",
+                    (ca, ca, rid, limit + 1),
+                ).fetchall()
+    except sqlite3.OperationalError:
+        return [], False
+    items = [dict(r) for r in rows[:limit]]
+    return items, len(rows) > limit
+
+
+def get_run(run_id: str) -> dict | None:
+    try:
+        with conn() as c:
+            row = c.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return dict(row) if row else None
+
+
+def delete_run(run_id: str) -> bool:
+    try:
+        with conn() as c:
+            cur = c.execute("DELETE FROM runs WHERE run_id=?", (run_id,))
+            return cur.rowcount > 0
+    except sqlite3.OperationalError:
+        return False
+
+
+def prune_runs(days: int) -> int:
+    """Drop run-index rows older than N days (keeps the index roughly aligned
+    with the rendered-output cache retention)."""
+    cutoff = int(time.time()) - days * 86400
+    with conn() as c:
+        cur = c.execute("DELETE FROM runs WHERE created_at < ?", (cutoff,))
+        return cur.rowcount

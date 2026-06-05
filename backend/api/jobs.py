@@ -54,6 +54,7 @@ class Job:
     error: Optional[dict] = None   # {code, message, details?} on failure
     api_key_name: str = "-"
     webhook_url: str = ""
+    seq: int = 0  # monotonic insertion order — keyset tiebreaker for list()
 
 
 def _truthy(name: str) -> bool:
@@ -130,6 +131,7 @@ class JobStore:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
         self._ttl = ttl
+        self._seq = 0  # monotonic counter for keyset-pagination tiebreaker
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="carousel-job"
         )
@@ -148,6 +150,8 @@ class JobStore:
         # otherwise an idle worker can advance the shared Job object past
         # "queued" before we copy it and the 202 body becomes non-deterministic.
         with self._lock:
+            self._seq += 1
+            job.seq = self._seq
             self._jobs[job.id] = job
             snap = copy.copy(job)
         self._executor.submit(self._run, job.id, fn, base)
@@ -157,6 +161,13 @@ class JobStore:
         with self._lock:
             job = self._jobs.get(job_id)
             return copy.copy(job) if job is not None else None
+
+    def list(self) -> list[Job]:
+        """Snapshot of all jobs, newest first (by created_at, then seq)."""
+        with self._lock:
+            jobs = [copy.copy(j) for j in self._jobs.values()]
+        jobs.sort(key=lambda j: (j.created_at, j.seq), reverse=True)
+        return jobs
 
     def _set(self, job_id: str, **fields) -> Optional[Job]:
         with self._lock:
