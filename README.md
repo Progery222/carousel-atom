@@ -85,13 +85,18 @@ frontend/
 External services can drive Carousel Studio via the versioned, key-authed
 `/api/v1/*` REST surface. Set `CAROUSEL_API_KEYS=...` and you get:
 
-- `/api/v1/topics`, `/api/v1/designs`, `/api/v1/preview/articles`
-- `/api/v1/render`, `/api/v1/render/edit`, `/api/v1/render/partial`
-- `/api/v1/export/{run_id}.zip`
+- **Discovery** — `/api/v1/topics`, `/api/v1/designs`, `/api/v1/preview/articles`
+- **Render (sync)** — `/api/v1/render`, `/api/v1/render/edit`, `/api/v1/render/partial`
+- **Render (async)** — `POST /api/v1/jobs` → `202` + `job_id`, poll
+  `GET /api/v1/jobs/{job_id}`, or get a signed `webhook_url` callback
+- **Results** — `GET /api/v1/runs/{run_id}` (caption + slides), `GET /api/v1/export/{run_id}.zip`
 
-Full spec: [docs/API.md](docs/API.md). Interactive docs: visit
-`/api-docs` (custom reference) or `/api/v1/docs` (Swagger UI) on the
-running app.
+A full render takes 10–40 s, so prefer the **async jobs** flow behind a
+proxy / Tailscale Funnel — the sync endpoints can hit gateway timeouts.
+
+Full spec, quickstart and client examples: **[docs/API.md](docs/API.md)** ·
+[docs/examples/](docs/examples/). Interactive docs: visit `/api-docs`
+(custom reference) or `/api/v1/docs` (Swagger UI) on the running app.
 
 ## Run it
 

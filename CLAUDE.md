@@ -87,6 +87,8 @@ FastAPI routes most worth knowing:
 
 Static mount: `/output/...` serves rendered slides from `backend/data/output/`.
 
+**Public API (`backend/api/v1.py`).** A versioned, key-authed (`X-API-Key`) surface under `/api/v1` for external consumers: discovery, sync render (`/render*`), **async render** (`POST /jobs` → `202` + `job_id`, poll `GET /jobs/{job_id}`, optional SSRF-guarded HMAC-signed webhook — see `backend/api/jobs.py`), result re-fetch (`GET /runs/{run_id}`), ZIP export. Auth in `auth.py`, rate-limit tiers in `rate_limit.py`, unified error envelope + `RequestValidationError` handler in `server.py` (scoped to `/api/v1` only — internal routes keep `{detail}`). On a successful render the impl layer (`server._persist_run`) writes a `run.json` sidecar next to the slides (caption + articles that `run_once` keeps only in memory) so `/runs/{run_id}` and the ZIP caption survive the request. The job store is **in-process / single-instance** (ephemeral `job_id`; durable handle is `run_id`). Full docs: `docs/API.md`, examples in `docs/examples/`.
+
 ### Frontend state machine (`frontend/src/App.tsx`)
 
 State: pick topic → pick design → render → optionally edit slides → export ZIP. History is `localStorage`-backed (`HISTORY_KEY = "carousel-studio:runs:v1"`). The `api.ts` module is the only place that talks to the backend.
